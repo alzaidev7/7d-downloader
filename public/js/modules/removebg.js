@@ -1,24 +1,12 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
-let segmenterInstance = null;
+let bgRemoverFn = null;
 
-async function getFastSegmenter() {
-  if (segmenterInstance) return segmenterInstance;
-  const vision = await import("https://esm.sh/@mediapipe/tasks-vision@0.10.14");
-  const fileset = await vision.FilesetResolver.forVisionTasks(
-    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
-  );
-  segmenterInstance = await vision.ImageSegmenter.createFromOptions(fileset, {
-    baseOptions: {
-      modelAssetPath:
-        "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
-      delegate: "CPU",
-    },
-    runningMode: "IMAGE",
-    outputCategoryMask: false,
-    outputConfidenceMasks: true,
-  });
-  return segmenterInstance;
+async function getGeneralBgRemover() {
+  if (bgRemoverFn) return bgRemoverFn;
+  const mod = await import("https://esm.sh/@imgly/background-removal@1.5.5");
+  bgRemoverFn = mod.removeBackground;
+  return bgRemoverFn;
 }
 
 export function initRemoveBgModule() {
@@ -43,17 +31,129 @@ export function initRemoveBgModule() {
   let stickerText = "";
   let stickerColor = "#ffffff";
   let brushMode = "erase";
-  let brushSize = 20;
+  let brushSize = 18;
   let isDrawing = false;
   let showOriginal = false;
 
-  // Koordinat & status indikator lingkaran merah
+  // State Zoom & Pan
+  let zoomLevel = 1;
+  let panX = 0;
+  let panY = 0;
+  const activePointers = new Map();
+  let pinchStartDist = 0;
+  let pinchStartZoom = 1;
+  let panStartMid = null;
+  let panStartOffset = { x: 0, y: 0 };
+  let strokeSnapshotBeforeTap = null;
+
+  // Koordinat & status indikator lingkaran kuas
   let pointerPos = null;
   let lastPos = null;
   let sizePreviewTimer = null;
 
   const undoStack = [];
   const redoStack = [];
+
+  // Siapkan viewport kanvas agar zoom tidak meluber keluar kotak
+  const viewport = canvas.parentElement;
+  if (viewport) {
+    viewport.style.overflow = "hidden";
+    viewport.style.touchAction = "none";
+    viewport.style.position = "relative";
+  }
+  canvas.style.touchAction = "none";
+  canvas.style.transformOrigin = "0 0";
+
+  // Tambahkan tombol kontrol Zoom (- | 1.0x | +) di bar atas
+  let zoomLabelEl = null;
+  if (topTools && !document.getElementById("bgZoomControls")) {
+    const zoomGroup = document.createElement("div");
+    zoomGroup.id = "bgZoomControls";
+    zoomGroup.style.cssText =
+      "display:inline-flex;align-items:center;gap:4px;background:rgba(255,255,255,0.06);padding:3px 6px;border-radius:10px;";
+
+    const btnZoomOut = document.createElement("button");
+    btnZoomOut.type = "button";
+    btnZoomOut.className = "btn-ghost-sm";
+    btnZoomOut.textContent = "−";
+    btnZoomOut.style.padding = "4px 9px";
+
+    zoomLabelEl = document.createElement("button");
+    zoomLabelEl.type = "button";
+    zoomLabelEl.className = "btn-ghost-sm";
+    zoomLabelEl.textContent = "1.0x";
+    zoomLabelEl.style.cssText = "padding:4px 8px;font-size:0.78rem;min-width:46px;";
+
+    const btnZoomIn = document.createElement("button");
+    btnZoomIn.type = "button";
+    btnZoomIn.className = "btn-ghost-sm";
+    btnZoomIn.textContent = "+";
+    btnZoomIn.style.padding = "4px 9px";
+
+    btnZoomOut.addEventListener("click", () => setZoom(zoomLevel - 0.5));
+    btnZoomIn.addEventListener("click", () => setZoom(zoomLevel + 0.5));
+    zoomLabelEl.addEventListener("click", resetZoomAndPan);
+
+    zoomGroup.append(btnZoomOut, zoomLabelEl, btnZoomIn);
+    topTools.appendChild(zoomGroup);
+  }
+
+  function clampPan() {
+    if (!viewport) return;
+    const vw = viewport.clientWidth || canvas.offsetWidth;
+    const vh = viewport.clientHeight || canvas.offsetHeight;
+    const scaledW = canvas.offsetWidth * zoomLevel;
+    const scaledH = canvas.offsetHeight * zoomLevel;
+
+    if (zoomLevel <= 1) {
+      panX = 0;
+      panY = 0;
+      return;
+    }
+    const minX = Math.min(0, vw - scaledW);
+    const minY = Math.min(0, vh - scaledH);
+    panX = Math.max(minX, Math.min(0, panX));
+    panY = Math.max(minY, Math.min(0, panY));
+  }
+
+  function applyTransform() {
+    clampPan();
+    canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+    if (zoomLabelEl) {
+      zoomLabelEl.textContent = `${zoomLevel.toFixed(1)}x`;
+    }
+  }
+
+  function setZoom(nextZoom, centerClientX = null, centerClientY = null) {
+    const prevZoom = zoomLevel;
+    zoomLevel = Math.max(1, Math.min(5, Number(nextZoom.toFixed(2))));
+
+    if (zoomLevel === 1) {
+      panX = 0;
+      panY = 0;
+    } else if (viewport && centerClientX !== null && centerClientY !== null) {
+      const vRect = viewport.getBoundingClientRect();
+      const cx = centerClientX - vRect.left;
+      const cy = centerClientY - vRect.top;
+      const ratio = zoomLevel / prevZoom;
+      panX = cx - (cx - panX) * ratio;
+      panY = cy - (cy - panY) * ratio;
+    } else if (viewport) {
+      const cx = (viewport.clientWidth || 0) / 2;
+      const cy = (viewport.clientHeight || 0) / 2;
+      const ratio = zoomLevel / prevZoom;
+      panX = cx - (cx - panX) * ratio;
+      panY = cy - (cy - panY) * ratio;
+    }
+    applyTransform();
+  }
+
+  function resetZoomAndPan() {
+    zoomLevel = 1;
+    panX = 0;
+    panY = 0;
+    applyTransform();
+  }
 
   function pushMaskHistory() {
     undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
@@ -82,7 +182,7 @@ export function initRemoveBgModule() {
       ctx.fillRect(0, 0, w, h);
     }
 
-    // 2. Potong Objek Sesuai Masker
+    // 2. Potong Objek Sesuai Alpha Masker (Halus / Anti-aliased)
     cutoutCtx.clearRect(0, 0, w, h);
     cutoutCtx.globalCompositeOperation = "source-over";
     cutoutCtx.drawImage(originalCanvas, 0, 0);
@@ -115,21 +215,21 @@ export function initRemoveBgModule() {
 
     // 5. Indikator Lingkaran Merah saat sentuhan / atur ukuran kuas
     if (includeCursor && pointerPos) {
+      const effectiveRadius = brushSize / zoomLevel;
       ctx.save();
       ctx.beginPath();
-      ctx.arc(pointerPos.x, pointerPos.y, brushSize, 0, Math.PI * 2);
+      ctx.arc(pointerPos.x, pointerPos.y, effectiveRadius, 0, Math.PI * 2);
       ctx.fillStyle =
         brushMode === "erase"
           ? "rgba(239, 68, 68, 0.38)"
           : "rgba(16, 185, 129, 0.35)";
       ctx.fill();
-      ctx.lineWidth = Math.max(2, Math.round(w * 0.004));
+      ctx.lineWidth = Math.max(1.5, Math.round(w * 0.0035) / zoomLevel);
       ctx.strokeStyle = brushMode === "erase" ? "#ef4444" : "#10b981";
       ctx.stroke();
 
-      // Titik pusat presisi di tengah lingkaran
       ctx.beginPath();
-      ctx.arc(pointerPos.x, pointerPos.y, 2.5, 0, Math.PI * 2);
+      ctx.arc(pointerPos.x, pointerPos.y, 2 / zoomLevel, 0, Math.PI * 2);
       ctx.fillStyle = "#ffffff";
       ctx.fill();
       ctx.restore();
@@ -145,7 +245,7 @@ export function initRemoveBgModule() {
 
     const titleEl = dropZone.querySelector(".drop-title");
     const oldTitle = titleEl.textContent;
-    titleEl.textContent = "Memproses AI Cepat (< 1 detik)...";
+    titleEl.textContent = "Memproses AI Presisi Tinggi...";
 
     try {
       const img = await createImageBitmap(file);
@@ -159,31 +259,33 @@ export function initRemoveBgModule() {
 
       originalCanvas.getContext("2d").drawImage(img, 0, 0, w, h);
 
-      const segmenter = await getFastSegmenter();
-      const result = segmenter.segment(originalCanvas);
-      const confidence = result.confidenceMasks[0].getAsFloat32Array();
+      // Jalankan model IS-Net general purpose (halus untuk logo, mobil, produk, & orang)
+      const removeBackground = await getGeneralBgRemover();
+      const resultBlob = await removeBackground(file, {
+        model: "isnet_quint8",
+        output: { format: "image/png", quality: 1 },
+        progress: (_key, current, total) => {
+          if (total > 0) {
+            const pct = Math.min(99, Math.round((current / total) * 100));
+            titleEl.textContent = `Memproses AI Presisi (${pct}%)...`;
+          }
+        },
+      });
 
-      const maskImg = maskCtx.createImageData(w, h);
-      for (let i = 0; i < confidence.length; i++) {
-        const alpha = confidence[i] > 0.45 ? Math.min(255, Math.round(confidence[i] * 255)) : 0;
-        const idx = i * 4;
-        maskImg.data[idx] = 255;
-        maskImg.data[idx + 1] = 255;
-        maskImg.data[idx + 2] = 255;
-        maskImg.data[idx + 3] = alpha;
-      }
-      maskCtx.putImageData(maskImg, 0, 0);
-      result.close();
+      const cutoutBitmap = await createImageBitmap(resultBlob);
+      maskCtx.clearRect(0, 0, w, h);
+      maskCtx.drawImage(cutoutBitmap, 0, 0, w, h);
 
       undoStack.length = 0;
       redoStack.length = 0;
       pushMaskHistory();
+      resetZoomAndPan();
 
       dropZone.classList.add("hidden");
       editorWrap.classList.remove("hidden");
       topTools.classList.remove("hidden");
       renderComposite(false);
-      saveLocalHistory("removebg", file.name, "Studio Cutout");
+      saveLocalHistory("removebg", file.name, "Studio Cutout HD");
     } catch (err) {
       alert("Gagal memproses gambar: " + err.message);
     } finally {
@@ -240,11 +342,18 @@ export function initRemoveBgModule() {
     btnErase.classList.remove("active");
   });
 
-  // Pratinjau lingkaran merah di tengah kanvas saat slider ukuran kuas digeser
+  // Pratinjau lingkaran merah saat slider ukuran kuas digeser
   document.getElementById("brushSizeRange")?.addEventListener("input", (e) => {
     brushSize = Number(e.target.value);
     if (canvas.width > 0) {
-      pointerPos = { x: canvas.width / 2, y: canvas.height / 2 };
+      const rect = canvas.getBoundingClientRect();
+      const vRect = (viewport || canvas).getBoundingClientRect();
+      const midX = vRect.left + vRect.width / 2;
+      const midY = vRect.top + vRect.height / 2;
+      pointerPos = {
+        x: ((midX - rect.left) / rect.width) * canvas.width,
+        y: ((midY - rect.top) / rect.height) * canvas.height,
+      };
       renderComposite(true);
       clearTimeout(sizePreviewTimer);
       sizePreviewTimer = setTimeout(() => {
@@ -265,11 +374,12 @@ export function initRemoveBgModule() {
   }
 
   function paintMaskStroke(fromPos, toPos) {
+    const effectiveRadius = brushSize / zoomLevel;
     maskCtx.save();
     maskCtx.globalCompositeOperation = brushMode === "erase" ? "destination-out" : "source-over";
     maskCtx.strokeStyle = "rgba(255,255,255,1)";
     maskCtx.fillStyle = "rgba(255,255,255,1)";
-    maskCtx.lineWidth = brushSize * 2;
+    maskCtx.lineWidth = effectiveRadius * 2;
     maskCtx.lineCap = "round";
     maskCtx.lineJoin = "round";
 
@@ -279,43 +389,106 @@ export function initRemoveBgModule() {
     maskCtx.stroke();
 
     maskCtx.beginPath();
-    maskCtx.arc(toPos.x, toPos.y, brushSize, 0, Math.PI * 2);
+    maskCtx.arc(toPos.x, toPos.y, effectiveRadius, 0, Math.PI * 2);
     maskCtx.fill();
     maskCtx.restore();
 
     renderComposite(true);
   }
 
+  function getPinchMetrics() {
+    const pts = Array.from(activePointers.values());
+    const dx = pts[1].x - pts[0].x;
+    const dy = pts[1].y - pts[0].y;
+    return {
+      dist: Math.hypot(dx, dy),
+      midX: (pts[0].x + pts[1].x) / 2,
+      midY: (pts[0].y + pts[1].y) / 2,
+    };
+  }
+
+  // Gesture 1 jari = Kuas Merah | 2 jari = Cubit Zoom & Geser
   canvas.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     canvas.setPointerCapture?.(e.pointerId);
-    isDrawing = true;
-    pushMaskHistory();
-    const pos = getCanvasCoords(e.clientX, e.clientY);
-    pointerPos = pos;
-    lastPos = pos;
-    paintMaskStroke(pos, pos);
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointers.size === 1) {
+      isDrawing = true;
+      strokeSnapshotBeforeTap = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
+      pushMaskHistory();
+      const pos = getCanvasCoords(e.clientX, e.clientY);
+      pointerPos = pos;
+      lastPos = pos;
+      paintMaskStroke(pos, pos);
+    } else if (activePointers.size === 2) {
+      // Batalkan titik kuas jika jari kedua menyentuh layar untuk pinch-zoom
+      if (isDrawing && strokeSnapshotBeforeTap) {
+        maskCtx.putImageData(strokeSnapshotBeforeTap, 0, 0);
+        undoStack.pop();
+        strokeSnapshotBeforeTap = null;
+      }
+      isDrawing = false;
+      pointerPos = null;
+      lastPos = null;
+      renderComposite(false);
+
+      const { dist, midX, midY } = getPinchMetrics();
+      pinchStartDist = dist || 1;
+      pinchStartZoom = zoomLevel;
+      panStartMid = { x: midX, y: midY };
+      panStartOffset = { x: panX, y: panY };
+    }
   });
 
   canvas.addEventListener("pointermove", (e) => {
-    if (!isDrawing) return;
+    if (!activePointers.has(e.pointerId)) return;
     e.preventDefault();
-    const pos = getCanvasCoords(e.clientX, e.clientY);
-    pointerPos = pos;
-    paintMaskStroke(lastPos || pos, pos);
-    lastPos = pos;
+    activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (activePointers.size === 2 && panStartMid) {
+      const { dist, midX, midY } = getPinchMetrics();
+      const scaleFactor = dist / pinchStartDist;
+      const targetZoom = Math.max(1, Math.min(5, pinchStartZoom * scaleFactor));
+
+      if (viewport) {
+        const vRect = viewport.getBoundingClientRect();
+        const anchorX = panStartMid.x - vRect.left;
+        const anchorY = panStartMid.y - vRect.top;
+        const ratio = targetZoom / pinchStartZoom;
+
+        zoomLevel = Number(targetZoom.toFixed(2));
+        panX = anchorX - (anchorX - panStartOffset.x) * ratio + (midX - panStartMid.x);
+        panY = anchorY - (anchorY - panStartOffset.y) * ratio + (midY - panStartMid.y);
+        applyTransform();
+      }
+      return;
+    }
+
+    if (activePointers.size === 1 && isDrawing) {
+      const pos = getCanvasCoords(e.clientX, e.clientY);
+      pointerPos = pos;
+      paintMaskStroke(lastPos || pos, pos);
+      lastPos = pos;
+    }
   });
 
-  function stopDrawing() {
-    if (!isDrawing) return;
-    isDrawing = false;
-    lastPos = null;
-    pointerPos = null;
-    renderComposite(false);
+  function handlePointerEnd(e) {
+    activePointers.delete(e.pointerId);
+    if (activePointers.size < 2) {
+      panStartMid = null;
+    }
+    if (activePointers.size === 0) {
+      isDrawing = false;
+      lastPos = null;
+      pointerPos = null;
+      strokeSnapshotBeforeTap = null;
+      renderComposite(false);
+    }
   }
 
-  canvas.addEventListener("pointerup", stopDrawing);
-  canvas.addEventListener("pointercancel", stopDrawing);
+  canvas.addEventListener("pointerup", handlePointerEnd);
+  canvas.addEventListener("pointercancel", handlePointerEnd);
 
   // Efek Blur, Bayangan & Teks
   document.getElementById("bgBlurRange")?.addEventListener("input", (e) => {
