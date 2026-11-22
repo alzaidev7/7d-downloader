@@ -1,167 +1,195 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
+let pendingHdUrl = null;
+
+function extractFirstHttpsUrl(text) {
+  const match = String(text || "").match(/https:\/\/[^\s"'<>]+/);
+  return match ? match[0] : null;
+}
+
+async function fetchTikTokClientSide(cleanUrl) {
+  try {
+    const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}&hd=1`;
+    const res = await fetch(api);
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.code !== 0 || !json?.data) return null;
+
+    const d = json.data;
+    const links = [];
+    if (d.hdplay?.startsWith("https://")) {
+      links.push({
+        label: "Download MP4 HD (No Watermark)",
+        url: d.hdplay,
+        quality: "hd",
+        type: "mp4",
+      });
+    }
+    if (d.play?.startsWith("https://")) {
+      links.push({
+        label: "Download MP4 (Standar)",
+        url: d.play,
+        quality: "sd",
+        type: "mp4",
+      });
+    }
+    if (d.music?.startsWith("https://")) {
+      links.push({
+        label: "Download MP3 (Audio Original)",
+        url: d.music,
+        quality: "audio",
+        type: "mp3",
+      });
+    }
+
+    if (!links.length) return null;
+    return {
+      ok: true,
+      title: d.title || "TikTok Video",
+      cover: d.cover || "",
+      links,
+    };
+  } catch {
+    return null;
+  }
+}
+
 export function initDownloaderModule() {
   const urlInput = document.getElementById("dlUrlInput");
   const btnPaste = document.getElementById("btnPasteUrl");
   const btnRun = document.getElementById("btnDownloadRun");
   const resultBox = document.getElementById("dlResultBox");
 
-  const hdGateModal = document.getElementById("hdGateModal");
-  const hdGateDesc = document.getElementById("hdGateDesc");
-  const btnTriggerHdAd = document.getElementById("btnTriggerHdAd");
-  const btnCloseHdGate = document.getElementById("btnCloseHdGate");
+  const hdModal = document.getElementById("hdGateModal");
+  const btnTriggerHd = document.getElementById("btnTriggerHdAd");
+  const btnCloseHd = document.getElementById("btnCloseHdGate");
 
-  let pendingHdUrl = null;
-  let hdCountdownTimer = null;
+  if (!urlInput || !btnRun) return;
 
-  // 1. Tombol Paste Otomatis dari Clipboard
-  btnPaste.addEventListener("click", async () => {
+  btnPaste?.addEventListener("click", async () => {
     try {
-      const text = await navigator.clipboard.readText();
-      if (text) urlInput.value = text.trim();
+      const clip = await navigator.clipboard.readText();
+      const extracted = extractFirstHttpsUrl(clip);
+      urlInput.value = extracted || clip.trim();
     } catch {
       urlInput.focus();
-      alert("Izinkan akses clipboard atau tempel manual di kolom tautan.");
+      alert("Izinkan akses clipboard atau tempel tautan secara manual.");
     }
   });
 
-  // 2. Logika Modal Wajib Nonton Iklan untuk HD
-  function openHdGate(targetUrl) {
-    if (!guardActionAgainstAdblock()) return;
-    pendingHdUrl = targetUrl;
-    btnTriggerHdAd.disabled = false;
-    btnTriggerHdAd.textContent = "Tonton Iklan & Buka HD";
-    hdGateDesc.textContent =
-      "Lihat iklan singkat selama 5 detik untuk membuka tautan unduhan MP4 HD Tanpa Watermark.";
-    hdGateModal.classList.remove("hidden");
-  }
-
-  btnCloseHdGate.addEventListener("click", () => {
-    clearInterval(hdCountdownTimer);
+  btnCloseHd?.addEventListener("click", () => {
     pendingHdUrl = null;
-    hdGateModal.classList.add("hidden");
+    hdModal?.classList.add("hidden");
   });
 
-  btnTriggerHdAd.addEventListener("click", () => {
+  btnTriggerHd?.addEventListener("click", () => {
     if (!pendingHdUrl) return;
-    if (!guardActionAgainstAdblock()) return;
-
-    // Panggil Titik Iklan ke-5 (Direct Link / Vignette Monetag/HilltopAds)
-    const directAdUrl = window.__7D_DIRECT_AD_URL__ || "";
-    if (directAdUrl) {
-      const popup = window.open(directAdUrl, "_blank", "noopener,noreferrer");
-      if (!popup) {
-        alert("Pop-up iklan diblokir browser. Izinkan pop-up untuk membuka kualitas HD.");
-        return;
-      }
-    } else {
-      window.dispatchEvent(new CustomEvent("7d:trigger-hd-ad"));
+    if (typeof window.trigger7DAdSlot5 === "function") {
+      window.trigger7DAdSlot5();
     }
 
-    // Hitung mundur 5 detik sebelum file HD terbuka
-    let seconds = 5;
-    btnTriggerHdAd.disabled = true;
-    btnTriggerHdAd.textContent = `Membuka HD dalam ${seconds} detik...`;
+    let sec = 5;
+    btnTriggerHd.disabled = true;
+    btnTriggerHd.textContent = `Membuka HD dalam ${sec} detik...`;
 
-    clearInterval(hdCountdownTimer);
-    hdCountdownTimer = setInterval(() => {
-      seconds -= 1;
-      if (seconds > 0) {
-        btnTriggerHdAd.textContent = `Membuka HD dalam ${seconds} detik...`;
+    const timer = setInterval(() => {
+      sec -= 1;
+      if (sec > 0) {
+        btnTriggerHd.textContent = `Membuka HD dalam ${sec} detik...`;
       } else {
-        clearInterval(hdCountdownTimer);
-        const finalUrl = pendingHdUrl;
+        clearInterval(timer);
+        btnTriggerHd.disabled = false;
+        btnTriggerHd.textContent = "Tonton Iklan & Buka HD";
+        hdModal?.classList.add("hidden");
+        window.open(pendingHdUrl, "_blank", "noopener,noreferrer");
         pendingHdUrl = null;
-        hdGateModal.classList.add("hidden");
-        window.open(finalUrl, "_blank", "noopener,noreferrer");
       }
     }, 1000);
   });
 
-  // 3. Render Hasil Susun Vertikal Ala SSSTik
-  function renderSafeResult(data) {
+  function renderDownloadResult(data) {
     resultBox.innerHTML = "";
     resultBox.classList.remove("hidden");
 
     const titleEl = document.createElement("p");
-    titleEl.style.cssText = "font-weight:600; margin-top:16px; font-size:0.95rem;";
+    titleEl.className = "dl-title";
+    titleEl.style.cssText = "font-weight:700;margin-bottom:12px;font-size:0.95rem;";
     titleEl.textContent = data.title || "Media Siap Diunduh";
     resultBox.appendChild(titleEl);
 
-    const stack = document.createElement("div");
-    stack.className = "dl-stack";
+    const listWrap = document.createElement("div");
+    listWrap.style.cssText = "display:flex;flex-direction:column;gap:10px;";
 
     (data.links || []).forEach((item) => {
-      if (typeof item.url !== "string" || !item.url.startsWith("https://")) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className =
+        item.quality === "hd"
+          ? "btn-emerald full"
+          : item.type === "mp3"
+          ? "btn-ghost-sm full dl-btn-row mp3"
+          : "btn-ghost-sm full";
+      btn.style.padding = "12px";
+      btn.textContent = item.label;
 
-      if (item.quality === "hd") {
-        // Tombol HD wajib melewati Ad-Gate
-        const btnHd = document.createElement("button");
-        btnHd.type = "button";
-        btnHd.className = "dl-btn-row hd";
+      btn.addEventListener("click", () => {
+        if (!guardActionAgainstAdblock()) return;
+        if (item.quality === "hd") {
+          pendingHdUrl = item.url;
+          hdModal?.classList.remove("hidden");
+        } else {
+          window.open(item.url, "_blank", "noopener,noreferrer");
+        }
+      });
 
-        const labelSpan = document.createElement("span");
-        labelSpan.textContent = item.label || "Download MP4 HD (No Watermark)";
-        const tagSpan = document.createElement("span");
-        tagSpan.className = "dl-tag";
-        tagSpan.textContent = "ADS • HD";
-
-        btnHd.append(labelSpan, tagSpan);
-        btnHd.addEventListener("click", () => openHdGate(item.url));
-        stack.appendChild(btnHd);
-      } else {
-        // Tombol MP4 Standar & MP3 langsung unduh
-        const a = document.createElement("a");
-        a.href = item.url;
-        a.target = "_blank";
-        a.rel = "noopener noreferrer";
-        a.className = `dl-btn-row ${item.type === "mp3" ? "mp3" : "sd"}`;
-
-        const labelSpan = document.createElement("span");
-        labelSpan.textContent =
-          item.label || (item.type === "mp3" ? "Download MP3 (Audio)" : "Download MP4");
-        const tagSpan = document.createElement("span");
-        tagSpan.className = "dl-tag";
-        tagSpan.textContent = item.type === "mp3" ? "MP3" : "MP4";
-
-        a.append(labelSpan, tagSpan);
-        stack.appendChild(a);
-      }
+      listWrap.appendChild(btn);
     });
 
-    resultBox.appendChild(stack);
+    resultBox.appendChild(listWrap);
   }
 
   btnRun.addEventListener("click", async () => {
     if (!guardActionAgainstAdblock()) return;
-    const rawUrl = urlInput.value.trim();
-    const urlMatch = rawUrl.match(/https:\/\/[^\s]+/); if (!urlMatch) {
-      return alert("Masukkan tautan valid yang diawali https://");
-    }
 
+    const cleanUrl = extractFirstHttpsUrl(urlInput.value);
+    if (!cleanUrl) {
+      return alert("Tempel tautan video yang valid (https://...) terlebih dahulu.");
+    }
+    urlInput.value = cleanUrl;
+
+    const oldLabel = btnRun.textContent;
     btnRun.disabled = true;
-    const oldText = btnRun.textContent;
-    btnRun.textContent = "Memproses...";
+    btnRun.textContent = "Memproses tautan...";
+    resultBox.classList.add("hidden");
 
     try {
-      const res = await fetch("/api/download", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: urlMatch[0] }),
-      });
-      const json = await res.json();
+      let data = null;
 
-      if (!res.ok || !json.ok) {
-        throw new Error(json.error || "Gagal mengekstrak media.");
+      // 1. Jika TikTok, ambil langsung via IP perangkat (anti blokir datacenter)
+      if (cleanUrl.includes("tiktok.com")) {
+        data = await fetchTikTokClientSide(cleanUrl);
       }
 
-      renderSafeResult(json);
-      saveLocalHistory("downloader", json.title || rawUrl, rawUrl);
+      // 2. Jalur Backend untuk YouTube, Instagram, Facebook, atau cadangan TikTok
+      if (!data) {
+        const res = await fetch("/api/download", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url: cleanUrl }),
+        });
+        data = await res.json();
+        if (!res.ok || !data?.ok) {
+          throw new Error(data?.error || "Gagal mengambil tautan media.");
+        }
+      }
+
+      renderDownloadResult(data);
+      saveLocalHistory("downloader", data.title || cleanUrl, cleanUrl);
     } catch (err) {
-      alert(err.message);
+      alert(err.message || "Gagal memproses video. Pastikan video bersifat publik.");
     } finally {
       btnRun.disabled = false;
-      btnRun.textContent = oldText;
+      btnRun.textContent = oldLabel;
     }
   });
 }
