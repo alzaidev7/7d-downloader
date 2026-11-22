@@ -1,55 +1,60 @@
-let lastAdRefreshAt = 0;
+let adblockDetected = false;
 
 export function initAdSystem() {
-  window.__7D_ADBLOCK_ACTIVE__ = false;
-
-  if (window.__7D_AD_BAIT_LOADED__ !== true) {
-    window.__7D_ADBLOCK_ACTIVE__ = true;
-  }
-
-  const bait = document.createElement("div");
-  bait.className = "adsbox ad-slot-bait";
-  bait.style.cssText = "width:1px;height:1px;position:fixed;left:-9999px;top:-9999px;pointer-events:none;";
-  document.body.appendChild(bait);
-
-  setTimeout(() => {
-    const style = window.getComputedStyle(bait);
-    if (
-      !document.body.contains(bait) ||
-      bait.offsetParent === null ||
-      style.display === "none" ||
-      style.visibility === "hidden"
-    ) {
-      window.__7D_ADBLOCK_ACTIVE__ = true;
-    }
-    bait.remove();
-  }, 150);
-
+  const modal = document.getElementById("adblockModal");
   const btnReload = document.getElementById("btnReloadPage");
+
   if (btnReload) {
     btnReload.addEventListener("click", () => window.location.reload());
   }
+
+  if (window.__7D_ADS_ENABLED__ === true) {
+    const bait = document.createElement("div");
+    bait.className = "pub_300x250 pub_300x250m text-ad textAd";
+    bait.style.cssText =
+      "width:1px!important;height:1px!important;position:absolute!important;left:-9999px!important;top:-9999px!important;";
+    document.body.appendChild(bait);
+
+    setTimeout(() => {
+      const blocked =
+        !bait.parentNode ||
+        bait.offsetHeight === 0 ||
+        window.getComputedStyle(bait).display === "none";
+
+      bait.remove();
+
+      if (blocked) {
+        adblockDetected = true;
+        modal?.classList.remove("hidden");
+      }
+    }, 800);
+  }
+
+  refreshAdSlotsOnTabSwitch();
 }
 
-// Dipanggil saat user berpindah tab SPA (jeda aman minimal 30 detik)
-export function refreshAdSlotsOnTabSwitch() {
-  if (window.__7D_ADBLOCK_ACTIVE__) return;
-  const now = Date.now();
-  if (now - lastAdRefreshAt < 30000) return;
-  lastAdRefreshAt = now;
-
-  // Hook siap pakai untuk memicu refresh zona iklan HilltopAds / Monetag
-  window.dispatchEvent(new CustomEvent("7d:refresh-ads"));
-}
-
-// Dipanggil sebelum eksekusi tombol utama (Download / Unduh PNG / Buat QR)
 export function guardActionAgainstAdblock() {
-  if (window.__7D_ADBLOCK_ACTIVE__) {
-    const modal = document.getElementById("adblockModal");
-    if (modal) modal.classList.remove("hidden");
+  if (adblockDetected) {
+    document.getElementById("adblockModal")?.classList.remove("hidden");
     return false;
   }
-  // Hook titik iklan ke-5 (Vignette / Interstitial ringan setelah aksi)
-  window.dispatchEvent(new CustomEvent("7d:trigger-action-ad"));
   return true;
+}
+
+export function refreshAdSlotsOnTabSwitch() {
+  const slots = ["adSlot1", "adSlot2", "adSlot3", "adSlot4"];
+  slots.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    const hasContent = el.innerHTML.trim().length > 0;
+    el.classList.toggle("empty", !hasContent);
+  });
+
+  const s3 = document.getElementById("adSlot3");
+  const s4 = document.getElementById("adSlot4");
+  const footerGrid = document.getElementById("adFooterGrid");
+  if (footerGrid && s3 && s4) {
+    const bothEmpty = s3.classList.contains("empty") && s4.classList.contains("empty");
+    footerGrid.classList.toggle("empty", bothEmpty);
+  }
 }

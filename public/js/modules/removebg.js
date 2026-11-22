@@ -106,7 +106,7 @@ export function initRemoveBgModule() {
 
       // Import modul AI secara dinamis saat dibutuhkan saja
       const { removeBackground } = await import(
-        "https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.4.5/+esm"
+        "https://esm.sh/@imgly/background-removal@1.4.5"
       );
       const resultBlob = await removeBackground(file);
       const cutoutUrl = URL.createObjectURL(resultBlob);
