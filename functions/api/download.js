@@ -19,6 +19,17 @@ function parseAllowedUrl(raw) {
   }
 }
 
+function extractYoutubeId(parsedUrl) {
+  const host = parsedUrl.hostname.toLowerCase();
+  if (host === "youtu.be") {
+    return parsedUrl.pathname.replace(/^\/+/, "").split("/")[0] || null;
+  }
+  if (parsedUrl.pathname.startsWith("/shorts/")) {
+    return parsedUrl.pathname.split("/")[2] || null;
+  }
+  return parsedUrl.searchParams.get("v");
+}
+
 function decodeHtmlEntities(str) {
   return String(str || "")
     .replace(/&amp;/g, "&")
@@ -41,6 +52,152 @@ function formatDuration(sec) {
   const mins = Math.floor(s / 60);
   const rem = s % 60;
   return `${String(mins).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
+}
+
+async function fetchYoutubeNoLogin(fullUrl, videoId) {
+  // 1. Jalur Cobalt Community Instances (tanpa login/cookies)
+  const cobaltInstances = [
+    "https://cobalt-api.kwiatekmiki.com",
+    "https://cobalt.api.timelessnesses.me",
+    "https://api.cobalt.tools",
+  ];
+
+  for (const base of cobaltInstances) {
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 5500);
+
+      const [vidRes, audRes] = await Promise.allSettled([
+        fetch(base, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url: fullUrl,
+            videoQuality: "720",
+            filenameStyle: "basic",
+          }),
+        }),
+        fetch(base, {
+          method: "POST",
+          signal: controller.signal,
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            url: fullUrl,
+            downloadMode: "audio",
+            audioFormat: "mp3",
+          }),
+        }),
+      ]);
+      clearTimeout(timer);
+
+      const links = [];
+      let title = "YouTube Video";
+
+      if (vidRes.status === "fulfilled" && vidRes.value.ok) {
+        const vJson = await vidRes.value.json().catch(() => null);
+        if (vJson?.url?.startsWith("https://")) {
+          if (vJson.filename) title = vJson.filename.replace(/\.[a-z0-9]+$/i, "");
+          links.push({
+            label: "Download MP4 HD (720p)",
+            url: vJson.url,
+            quality: "hd",
+            type: "mp4",
+          });
+        }
+      }
+
+      if (audRes.status === "fulfilled" && audRes.value.ok) {
+        const aJson = await audRes.value.json().catch(() => null);
+        if (aJson?.url?.startsWith("https://")) {
+          links.push({
+            label: "Download Audio (MP3)",
+            url: aJson.url,
+            quality: "audio",
+            type: "mp3",
+          });
+        }
+      }
+
+      if (links.length) {
+        const cover = videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : "";
+        return { title, cover, links };
+      }
+    } catch {
+      // Lanjut ke instance berikutnya
+    }
+  }
+
+  // 2. Jalur Cadangan Invidious Public API (tanpa login/cookies)
+  if (videoId) {
+    const invidiousInstances = [
+      "https://inv.nadeko.net",
+      "https://invidious.nerdvpn.de",
+      "https://yt.artemislena.eu",
+    ];
+
+    for (const inv of invidiousInstances) {
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5000);
+        const res = await fetch(`${inv}/api/v1/videos/${encodeURIComponent(videoId)}`, {
+          signal: controller.signal,
+          headers: { "Accept": "application/json" },
+        });
+        clearTimeout(timer);
+
+        if (!res.ok) continue;
+        const data = await res.json().catch(() => null);
+        if (!data) continue;
+
+        const formatStreams = Array.isArray(data.formatStreams) ? data.formatStreams : [];
+        const adaptiveFormats = Array.isArray(data.adaptiveFormats) ? data.adaptiveFormats : [];
+        const links = [];
+
+        formatStreams.sort((a, b) => parseInt(b.resolution || "0", 10) - parseInt(a.resolution || "0", 10));
+        if (formatStreams[0]?.url?.startsWith("https://")) {
+          links.push({
+            label: `Download MP4 (${formatStreams[0].resolution || "HD"})`,
+            url: formatStreams[0].url,
+            quality: "hd",
+            type: "mp4",
+          });
+        }
+
+        const audioOnly = adaptiveFormats.find(
+          (f) => f.type?.startsWith("audio/") && f.url?.startsWith("https://")
+        );
+        if (audioOnly) {
+          links.push({
+            label: "Download Audio (M4A / MP3)",
+            url: audioOnly.url,
+            quality: "audio",
+            type: "mp3",
+          });
+        }
+
+        if (links.length) {
+          return {
+            title: data.title || "YouTube Video",
+            cover: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+            duration: data.lengthSeconds ? formatDuration(data.lengthSeconds) : "",
+            author: data.author ? { name: data.author } : null,
+            links,
+          };
+        }
+      } catch {
+        // Lanjut ke instance berikutnya
+      }
+    }
+  }
+
+  return null;
 }
 
 async function queryCustomExtractor(endpoint, targetUrl, apiKey = "") {
@@ -150,10 +307,16 @@ export async function onRequestPost(context) {
 
     const host = parsed.hostname.toLowerCase();
     const fullUrl = parsed.toString();
+    const isYoutube = host.includes("youtube.com") || host === "youtu.be";
     let result = null;
     let upstreamError = "";
 
-    if (env.EXTRACTOR_API_URL) {
+    if (isYoutube) {
+      const videoId = extractYoutubeId(parsed);
+      result = await fetchYoutubeNoLogin(fullUrl, videoId);
+    }
+
+    if (!result && env.EXTRACTOR_API_URL) {
       const custom = await queryCustomExtractor(
         env.EXTRACTOR_API_URL,
         fullUrl,
