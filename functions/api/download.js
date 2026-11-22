@@ -53,69 +53,40 @@ async function queryCustomExtractor(endpoint, targetUrl, apiKey = "") {
     headers["Authorization"] = `Api-Key ${apiKey}`;
   }
 
-  const [hdRes, sdRes, mp3Res] = await Promise.allSettled([
-    fetch(cleanEndpoint, {
+  try {
+    const res = await fetch(cleanEndpoint, {
       method: "POST",
       headers,
-      body: JSON.stringify({ url: targetUrl, videoQuality: "720" }),
-    }),
-    fetch(cleanEndpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ url: targetUrl, videoQuality: "360" }),
-    }),
-    fetch(cleanEndpoint, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ url: targetUrl, downloadMode: "audio", audioFormat: "mp3" }),
-    }),
-  ]);
+      body: JSON.stringify({ url: targetUrl }),
+    });
 
-  const links = [];
-  let title = "7D Media Download";
-  let cover = "";
-  let duration = "";
-  let author = null;
-  let lastUpstreamError = "";
-
-  const parseSide = async (settled) => {
-    if (settled.status !== "fulfilled") return null;
-    const res = settled.value;
     const json = await res.json().catch(() => null);
     if (!res.ok) {
-      if (json?.detail) lastUpstreamError = String(json.detail);
-      else lastUpstreamError = `HTTP ${res.status} dari server ekstraktor`;
-      return null;
+      const errMsg = json?.detail ? String(json.detail) : `HTTP ${res.status} dari server ekstraktor`;
+      return { data: null, error: errMsg };
     }
-    return json;
-  };
 
-  const hd = await parseSide(hdRes);
-  const sd = await parseSide(sdRes);
-  const mp3 = await parseSide(mp3Res);
+    const links = Array.isArray(json?.links)
+      ? json.links.filter((l) => l?.url?.startsWith("https://"))
+      : [];
 
-  const meta = hd || sd || mp3;
-  if (meta) {
-    if (meta.filename) title = meta.filename.replace(/\.[a-z0-9]+$/i, "");
-    if (meta.cover) cover = meta.cover;
-    if (meta.duration) duration = formatDuration(meta.duration);
-    if (meta.author) author = { name: meta.author };
-  }
+    if (!links.length && json?.url?.startsWith("https://")) {
+      links.push({ label: "Download MP4 HD", url: json.url, quality: "hd", type: "mp4" });
+    }
 
-  if (hd?.url?.startsWith("https://")) {
-    links.push({ label: "Download MP4 HD (720p)", url: hd.url, quality: "hd", type: "mp4" });
-  }
-  if (sd?.url?.startsWith("https://") && sd.url !== hd?.url) {
-    links.push({ label: "Download MP4 (Standar)", url: sd.url, quality: "sd", type: "mp4" });
-  }
-  if (mp3?.url?.startsWith("https://")) {
-    links.push({ label: "Download Audio (M4A / MP3)", url: mp3.url, quality: "audio", type: "mp3" });
-  }
+    if (!links.length) {
+      return { data: null, error: "Tautan media kosong" };
+    }
 
-  if (links.length) {
+    const title = (json.title || json.filename || "7D Media Download").replace(/\.[a-z0-9]+$/i, "");
+    const cover = json.cover || "";
+    const duration = json.duration ? formatDuration(json.duration) : "";
+    const author = json.author ? { name: json.author } : null;
+
     return { data: { title, cover, duration, author, links }, error: "" };
+  } catch (err) {
+    return { data: null, error: err?.message || "Koneksi ke server ekstraktor gagal" };
   }
-  return { data: null, error: lastUpstreamError };
 }
 
 async function fetchFacebookDirect(fullUrl) {
