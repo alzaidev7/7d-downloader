@@ -142,16 +142,15 @@ export function initDownloaderModule() {
     card.style.cssText =
       "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;overflow:hidden;";
 
-    // 1. Area Preview Media (Video / Thumbnail + Durasi)
-    const videoSrc =
-      data.previewVideo ||
-      (data.links || []).find((l) => l.type === "mp4")?.url ||
-      "";
+    // 1. Area Preview Media (Terkunci tanpa tombol download bawaan browser)
+    const sdItem = (data.links || []).find((l) => l.type === "mp4" && l.quality !== "hd");
+    const fallbackItem = (data.links || []).find((l) => l.type === "mp4");
+    const videoSrc = data.previewVideo || sdItem?.url || fallbackItem?.url || "";
 
     if (data.cover || videoSrc) {
       const mediaWrap = document.createElement("div");
       mediaWrap.style.cssText =
-        "position:relative;width:100%;aspect-ratio:16/10;background:#0a0a0c;overflow:hidden;";
+        "position:relative;width:100%;aspect-ratio:16/10;background:#0a0a0c;overflow:hidden;user-select:none;";
 
       if (videoSrc) {
         const videoEl = document.createElement("video");
@@ -160,6 +159,9 @@ export function initDownloaderModule() {
         videoEl.controls = true;
         videoEl.playsInline = true;
         videoEl.preload = "metadata";
+        videoEl.disablePictureInPicture = true;
+        videoEl.setAttribute("controlsList", "nodownload noplaybackrate noremoteplayback");
+        videoEl.addEventListener("contextmenu", (e) => e.preventDefault());
         videoEl.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
         mediaWrap.appendChild(videoEl);
       } else if (data.cover) {
@@ -230,7 +232,7 @@ export function initDownloaderModule() {
     titleEl.textContent = data.title || "Media Siap Diunduh";
     bodyWrap.appendChild(titleEl);
 
-    // 3. Daftar Tombol Download
+    // 3. Daftar Tombol Download (Semua melewati sistem iklan)
     const listWrap = document.createElement("div");
     listWrap.style.cssText = "display:flex;flex-direction:column;gap:10px;";
 
@@ -252,6 +254,9 @@ export function initDownloaderModule() {
           pendingHdUrl = item.url;
           hdModal?.classList.remove("hidden");
         } else {
+          if (typeof window.trigger7DAdSlot5 === "function") {
+            window.trigger7DAdSlot5();
+          }
           window.open(item.url, "_blank", "noopener,noreferrer");
         }
       });
