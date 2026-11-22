@@ -1,31 +1,60 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
-let modnetPromise = null;
+let rmbgPipelinePromise = null;
 
-async function getModnetPipeline(onProgress) {
-  if (!modnetPromise) {
-    modnetPromise = (async () => {
+async function getGeneralRmbgPipeline(onProgress) {
+  if (!rmbgPipelinePromise) {
+    rmbgPipelinePromise = (async () => {
       const { AutoModel, AutoProcessor, RawImage, env } = await import(
         "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.2"
       );
       env.allowLocalModels = false;
 
-      const model = await AutoModel.from_pretrained("Xenova/modnet", {
+      const device = typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm";
+      const model = await AutoModel.from_pretrained("briaai/RMBG-1.4", {
         dtype: "q8",
+        device,
         progress_callback: (info) => {
           if (info?.status === "progress" && typeof info.progress === "number" && onProgress) {
             onProgress(Math.min(95, Math.round(info.progress)));
           }
         },
       });
-      const processor = await AutoProcessor.from_pretrained("Xenova/modnet");
+      const processor = await AutoProcessor.from_pretrained("briaai/RMBG-1.4");
       return { model, processor, RawImage };
     })().catch((err) => {
-      modnetPromise = null;
+      rmbgPipelinePromise = null;
       throw err;
     });
   }
-  return modnetPromise;
+  return rmbgPipelinePromise;
+}
+
+async function tryServerRemoveBg(canvasEl) {
+  const blob = await new Promise((resolve) => canvasEl.toBlob(resolve, "image/jpeg", 0.92));
+  if (!blob) return null;
+
+  const form = new FormData();
+  form.append("image", blob, "photo.jpg");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 18000);
+
+  try {
+    const res = await fetch("/api/removebg", {
+      method: "POST",
+      body: form,
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const contentType = res.headers.get("Content-Type") || "";
+    if (!contentType.includes("image/png")) return null;
+    return await res.blob();
+  } catch {
+    clearTimeout(timer);
+    return null;
+  }
 }
 
 export function initRemoveBgModule() {
@@ -50,7 +79,6 @@ export function initRemoveBgModule() {
   let isDrawing = false;
   let showOriginal = false;
 
-  // State Gesture Zoom & Pan
   const activePointers = new Map();
   let pinchStartDist = 0;
   let pinchStartZoom = 1;
@@ -58,7 +86,6 @@ export function initRemoveBgModule() {
   let panStartOffset = { x: 0, y: 0 };
   let strokeSnapshotBeforeTap = null;
 
-  // Koordinat indikator lingkaran kuas
   let pointerPos = null;
   let lastPos = null;
   let sizePreviewTimer = null;
@@ -76,7 +103,6 @@ export function initRemoveBgModule() {
   canvas.style.touchAction = "none";
   canvas.style.transformOrigin = "0 0";
 
-  // Strip thumbnail + tombol (+) di atas editorWrap
   let stripContainer = document.getElementById("bgMultiStrip");
   if (!stripContainer && editorWrap) {
     stripContainer = document.createElement("div");
@@ -86,7 +112,6 @@ export function initRemoveBgModule() {
     editorWrap.insertBefore(stripContainer, editorWrap.firstChild);
   }
 
-  // Tombol kontrol Zoom (- | 1.0x | +)
   let zoomLabelEl = null;
   if (topTools && !document.getElementById("bgZoomControls")) {
     const zoomGroup = document.createElement("div");
@@ -405,29 +430,39 @@ export function initRemoveBgModule() {
     mCanvas.height = h;
     const mCtx = mCanvas.getContext("2d");
 
-    const { model, processor, RawImage } = await getModnetPipeline(statusCallback);
-    if (statusCallback) statusCallback(98);
+    // 1. Coba jalur Server AI dulu (cepat < 1.5s & akurat untuk mobil/logo/orang)
+    const serverPngBlob = await tryServerRemoveBg(origC);
 
-    const rawImg = RawImage.fromCanvas(origC);
-    const { pixel_values } = await processor(rawImg);
-    const { output } = await model({ input: pixel_values });
+    if (serverPngBlob) {
+      const cutoutBitmap = await createImageBitmap(serverPngBlob);
+      mCtx.clearRect(0, 0, w, h);
+      mCtx.drawImage(cutoutBitmap, 0, 0, w, h);
+    } else {
+      // 2. Fallback ke model General Object RMBG-1.4 di browser
+      const { model, processor, RawImage } = await getGeneralRmbgPipeline(statusCallback);
+      if (statusCallback) statusCallback(98);
 
-    const alphaTensor = output[0].mul(255).to("uint8");
-    const resizedMask = await RawImage.fromTensor(alphaTensor).resize(w, h);
-    const maskData = resizedMask.data;
-    const step = resizedMask.channels || 1;
+      const rawImg = RawImage.fromCanvas(origC);
+      const { pixel_values } = await processor(rawImg);
+      const { output } = await model({ input: pixel_values });
 
-    const imgData = mCtx.createImageData(w, h);
-    const totalPixels = w * h;
-    for (let i = 0; i < totalPixels; i++) {
-      const alpha = maskData[i * step];
-      const idx = i * 4;
-      imgData.data[idx] = 255;
-      imgData.data[idx + 1] = 255;
-      imgData.data[idx + 2] = 255;
-      imgData.data[idx + 3] = alpha;
+      const alphaTensor = output[0].mul(255).to("uint8");
+      const resizedMask = await RawImage.fromTensor(alphaTensor).resize(w, h);
+      const maskData = resizedMask.data;
+      const step = resizedMask.channels || 1;
+
+      const imgData = mCtx.createImageData(w, h);
+      const totalPixels = w * h;
+      for (let i = 0; i < totalPixels; i++) {
+        const alpha = maskData[i * step];
+        const idx = i * 4;
+        imgData.data[idx] = 255;
+        imgData.data[idx + 1] = 255;
+        imgData.data[idx + 2] = 255;
+        imgData.data[idx + 3] = alpha;
+      }
+      mCtx.putImageData(imgData, 0, 0);
     }
-    mCtx.putImageData(imgData, 0, 0);
 
     const session = {
       id: `bg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -475,7 +510,7 @@ export function initRemoveBgModule() {
     try {
       let lastCreated = null;
       for (let i = 0; i < files.length; i++) {
-        const labelPrefix = files.length > 1 ? `Foto ${i + 1}/${files.length}` : "AI Presisi";
+        const labelPrefix = files.length > 1 ? `Foto ${i + 1}/${files.length}` : "AI Studio";
         titleEl.textContent = `Memproses ${labelPrefix}...`;
 
         const created = await processSingleFile(files[i], (pct) => {
