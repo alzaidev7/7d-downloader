@@ -19,6 +19,22 @@ function parseAllowedUrl(raw) {
   }
 }
 
+function decodeHtmlEntities(str) {
+  return String(str || "")
+    .replace(/&amp;/g, "&")
+    .replace(/&#x26;/g, "&")
+    .replace(/&#38;/g, "&")
+    .replace(/&quot;/g, '"');
+}
+
+function decodeJsonString(raw) {
+  try {
+    return JSON.parse(`"${raw}"`);
+  } catch {
+    return raw.replace(/\\\//g, "/").replace(/\\u0026/g, "&");
+  }
+}
+
 // ==========================================
 // 1. EKSTRAKTOR YOUTUBE & SHORTS
 // ==========================================
@@ -34,76 +50,104 @@ function extractYouTubeId(parsed) {
   return parsed.searchParams.get("v");
 }
 
-async function queryYouTubeClient(videoId, clientConfig, userAgent) {
-  const res = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent": userAgent,
-    },
-    body: JSON.stringify({
-      videoId,
-      context: {
-        client: clientConfig,
-        thirdParty: { embedUrl: "https://www.youtube.com/" },
-      },
+async function queryCobaltNode(endpoint, targetUrl, apiKey = "") {
+  const headers = {
+    "Accept": "application/json",
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/126.0.0.0 Safari/537.36",
+  };
+  if (apiKey) {
+    headers["Authorization"] = `Api-Key ${apiKey}`;
+  }
+
+  const [hdRes, sdRes, mp3Res] = await Promise.allSettled([
+    fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: targetUrl, videoQuality: "720" }),
     }),
-  });
-
-  if (!res.ok) return null;
-  const data = await res.json().catch(() => null);
-  const streaming = data?.streamingData;
-  if (!streaming) return null;
-
-  const title = data?.videoDetails?.title || "YouTube Video";
-  const formats = streaming.formats || [];
-  const adaptive = streaming.adaptiveFormats || [];
-
-  const hdMuxed = formats.find((f) => f.url && (f.height >= 720 || f.itag === 22));
-  const sdMuxed =
-    formats.find((f) => f.url && (f.itag === 18 || f.height <= 480)) ||
-    formats.find((f) => f.url);
-  const hdAdaptive = adaptive.find(
-    (f) => f.url && f.mimeType?.includes("video/mp4") && f.height >= 720
-  );
-  const audioStream = adaptive.find(
-    (f) => f.url && f.mimeType?.includes("audio/mp4")
-  );
+    fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: targetUrl, videoQuality: "360" }),
+    }),
+    fetch(endpoint, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ url: targetUrl, downloadMode: "audio", audioFormat: "mp3" }),
+    }),
+  ]);
 
   const links = [];
-  if (hdMuxed?.url) {
-    links.push({
-      label: `Download MP4 HD (${hdMuxed.qualityLabel || "720p"})`,
-      url: hdMuxed.url,
-      quality: "hd",
-      type: "mp4",
-    });
-  } else if (hdAdaptive?.url) {
-    links.push({
-      label: `Download MP4 HD (${hdAdaptive.qualityLabel || "1080p"})`,
-      url: hdAdaptive.url,
-      quality: "hd",
-      type: "mp4",
-    });
+  let title = "7D Media Download";
+
+  if (hdRes.status === "fulfilled" && hdRes.value.ok) {
+    const hd = await hdRes.value.json().catch(() => null);
+    if (hd?.url?.startsWith("https://")) {
+      if (hd.filename) title = hd.filename.replace(/\.[a-z0-9]+$/i, "");
+      links.push({ label: "Download MP4 HD (720p)", url: hd.url, quality: "hd", type: "mp4" });
+    }
+  }
+  if (sdRes.status === "fulfilled" && sdRes.value.ok) {
+    const sd = await sdRes.value.json().catch(() => null);
+    if (sd?.url?.startsWith("https://")) {
+      if (title === "7D Media Download" && sd.filename) {
+        title = sd.filename.replace(/\.[a-z0-9]+$/i, "");
+      }
+      links.push({ label: "Download MP4 (Standar)", url: sd.url, quality: "sd", type: "mp4" });
+    }
+  }
+  if (mp3Res.status === "fulfilled" && mp3Res.value.ok) {
+    const mp3 = await mp3Res.value.json().catch(() => null);
+    if (mp3?.url?.startsWith("https://")) {
+      links.push({ label: "Download MP3 (Audio)", url: mp3.url, quality: "audio", type: "mp3" });
+    }
   }
 
-  if (sdMuxed?.url) {
-    links.push({
-      label: `Download MP4 (${sdMuxed.qualityLabel || "360p"})`,
-      url: sdMuxed.url,
-      quality: "sd",
-      type: "mp4",
-    });
-  }
+  return links.length ? { title, links } : null;
+}
 
-  if (audioStream?.url) {
-    links.push({
-      label: "Download Audio (M4A / MP3)",
-      url: audioStream.url,
-      quality: "audio",
-      type: "mp3",
+async function queryOceanSaverYouTube(canonicalUrl) {
+  const fetchFormat = async (format) => {
+    const initUrl = `https://p.oceansaver.in/ajax/download.php?copyright=0&format=${format}&url=${encodeURIComponent(canonicalUrl)}`;
+    const res = await fetch(initUrl, {
+      headers: { "User-Agent": "Mozilla/5.0" },
     });
-  }
+    if (!res.ok) return null;
+    const initData = await res.json().catch(() => null);
+    if (!initData?.success || !initData?.id) return null;
+
+    if (initData.download_url?.startsWith("https://")) {
+      return { title: initData.title, url: initData.download_url };
+    }
+
+    // Polling singkat maksimal 4 kali (total ~4 detik)
+    const progressUrl = `https://p.oceansaver.in/ajax/progress.php?id=${encodeURIComponent(initData.id)}`;
+    for (let i = 0; i < 4; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      const pRes = await fetch(progressUrl, { headers: { "User-Agent": "Mozilla/5.0" } });
+      if (!pRes.ok) continue;
+      const pData = await pRes.json().catch(() => null);
+      if (pData?.download_url?.startsWith("https://")) {
+        return { title: initData.title, url: pData.download_url };
+      }
+      if (pData?.success === 1 && !pData?.download_url) break;
+    }
+    return null;
+  };
+
+  const [hd, sd, mp3] = await Promise.all([
+    fetchFormat("720"),
+    fetchFormat("360"),
+    fetchFormat("mp3"),
+  ]);
+
+  const links = [];
+  const title = hd?.title || sd?.title || mp3?.title || "YouTube Video";
+
+  if (hd?.url) links.push({ label: "Download MP4 HD (720p)", url: hd.url, quality: "hd", type: "mp4" });
+  if (sd?.url) links.push({ label: "Download MP4 (360p)", url: sd.url, quality: "sd", type: "mp4" });
+  if (mp3?.url) links.push({ label: "Download MP3 (Audio)", url: mp3.url, quality: "audio", type: "mp3" });
 
   return links.length ? { title, links } : null;
 }
@@ -111,73 +155,31 @@ async function queryYouTubeClient(videoId, clientConfig, userAgent) {
 async function fetchYouTubeDirect(parsed) {
   const videoId = extractYouTubeId(parsed);
   if (!videoId) return null;
+  const canonicalUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
-  // Jalur 1: Embedded TV Client (paling tahan blokir bot IP datacenter)
-  let result = await queryYouTubeClient(
-    videoId,
-    {
-      clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
-      clientVersion: "2.0",
-      hl: "id",
-      gl: "ID",
-    },
-    "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 TV Safari/537.36"
-  );
-  if (result) return result;
-
-  // Jalur 2: Android VR Client
-  result = await queryYouTubeClient(
-    videoId,
-    {
-      clientName: "ANDROID_VR",
-      clientVersion: "1.56.21",
-      deviceMake: "Oculus",
-      deviceModel: "Quest 3",
-      osName: "Android",
-      osVersion: "12L",
-      hl: "id",
-      gl: "ID",
-    },
-    "com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
-  );
-  if (result) return result;
-
-  // Jalur 3: Cadangan Piped Public API
-  const pipedNodes = [
-    "https://api.piped.private.coffee",
-    "https://pipedapi.kavin.rocks",
+  // Jalur 1: Public Cobalt Nodes dengan PO-Token
+  const cobaltNodes = [
+    "https://cobalt-api.meowing.de/",
+    "https://capi.3kh0.net/",
+    "https://cobalt.api.timelessnesses.me/",
+    "https://api.kektube.com/",
   ];
-  for (const node of pipedNodes) {
+
+  for (const node of cobaltNodes) {
     try {
-      const res = await fetch(`${node}/streams/${videoId}`, {
-        headers: { "User-Agent": "7D-Downloader/1.0" },
-      });
-      if (!res.ok) continue;
-      const json = await res.json();
-      const videoStreams = (json.videoStreams || []).filter(
-        (s) => s.url && s.format === "MPEG_4" && !s.videoOnly
-      );
-      const audioStreams = (json.audioStreams || []).filter((s) => s.url);
-
-      const links = [];
-      const hd = videoStreams.find((s) => parseInt(s.quality, 10) >= 720);
-      const sd = videoStreams[0];
-
-      if (hd) {
-        links.push({ label: `Download MP4 HD (${hd.quality})`, url: hd.url, quality: "hd", type: "mp4" });
-      }
-      if (sd) {
-        links.push({ label: `Download MP4 (${sd.quality})`, url: sd.url, quality: "sd", type: "mp4" });
-      }
-      if (audioStreams[0]) {
-        links.push({ label: "Download Audio (M4A / MP3)", url: audioStreams[0].url, quality: "audio", type: "mp3" });
-      }
-      if (links.length) {
-        return { title: json.title || "YouTube Video", links };
-      }
+      const res = await queryCobaltNode(node, canonicalUrl);
+      if (res) return res;
     } catch {
       continue;
     }
+  }
+
+  // Jalur 2: OceanSaver Extractor
+  try {
+    const oceanRes = await queryOceanSaverYouTube(canonicalUrl);
+    if (oceanRes) return oceanRes;
+  } catch {
+    // lanjut ke fallback berikutnya
   }
 
   return null;
@@ -186,18 +188,9 @@ async function fetchYouTubeDirect(parsed) {
 // ==========================================
 // 2. EKSTRAKTOR INSTAGRAM (REELS, SHARE & POST)
 // ==========================================
-function decodeJsonString(raw) {
-  try {
-    return JSON.parse(`"${raw}"`);
-  } catch {
-    return raw.replace(/\\\//g, "/").replace(/\\u0026/g, "&");
-  }
-}
-
 async function fetchInstagramDirect(parsed) {
   let targetPath = parsed.pathname;
 
-  // Jika link berbentuk /share/reel/... atau /share/p/..., ikuti redirect dulu
   if (targetPath.includes("/share/")) {
     try {
       const redirRes = await fetch(parsed.toString(), {
@@ -209,42 +202,45 @@ async function fetchInstagramDirect(parsed) {
       });
       targetPath = new URL(redirRes.url).pathname;
     } catch {
-      // lanjut pakai path awal
+      // gunakan path awal jika gagal redirect
     }
   }
 
   const match = targetPath.match(/\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
   if (!match) return null;
   const shortcode = match[2];
+  const canonicalIg = `https://www.instagram.com/reel/${shortcode}/`;
 
-  // Jalur 1: Embed Captioned Page (mendukung URL ter-escape \/)
-  const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
-  const res = await fetch(embedUrl, {
-    headers: {
-      "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-  });
+  // Jalur 1: Embed OpenGraph Resolver (tahan blokir login wall)
+  const embedMirrors = [
+    `https://d.ddinstagram.com/reel/${shortcode}/`,
+    `https://www.kkinstagram.com/reel/${shortcode}/`,
+  ];
 
-  if (res.ok) {
-    const html = await res.text();
-    const patterns = [
-      /"video_url"\s*:\s*"(https?:[^"]+)"/,
-      /"url"\s*:\s*"(https?:[^"]+\.mp4[^"]*)"/,
-    ];
+  for (const mirrorUrl of embedMirrors) {
+    try {
+      const res = await fetch(mirrorUrl, {
+        redirect: "follow",
+        headers: {
+          "User-Agent": "Mozilla/5.0 (compatible; Discordbot/2.0; +https://discordapp.com)",
+          "Accept": "text/html,application/xhtml+xml",
+        },
+      });
+      if (!res.ok) continue;
+      const html = await res.text();
 
-    for (const regex of patterns) {
-      const m = html.match(regex);
-      if (m) {
-        const videoUrl = decodeJsonString(m[1]);
+      const ogVideo =
+        html.match(/<meta[^>]+property=["']og:video["'][^>]+content=["']([^"']+)["']/i) ||
+        html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:video["']/i);
+
+      if (ogVideo) {
+        let videoUrl = decodeHtmlEntities(ogVideo[1]);
+        if (videoUrl.startsWith("/")) {
+          videoUrl = new URL(mirrorUrl).origin + videoUrl;
+        }
         if (videoUrl.startsWith("https://")) {
-          const userMatch = html.match(/class="CaptionUsername"[^>]*>([^<]+)</);
-          const title = userMatch
-            ? `Instagram Video (@${userMatch[1].trim()})`
-            : `Instagram Reel (${shortcode})`;
-
+          const ogTitle = html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+          const title = ogTitle ? decodeHtmlEntities(ogTitle[1]) : `Instagram Video (${shortcode})`;
           return {
             title,
             links: [
@@ -254,43 +250,25 @@ async function fetchInstagramDirect(parsed) {
           };
         }
       }
+    } catch {
+      continue;
     }
   }
 
-  // Jalur 2: Public GraphQL Anonymous Query
-  try {
-    const gqlBody = new URLSearchParams();
-    gqlBody.set("variables", JSON.stringify({ shortcode }));
-    gqlBody.set("doc_id", "8845758582119845");
+  // Jalur 2: Public Cobalt Nodes untuk Instagram
+  const cobaltNodes = [
+    "https://cobalt-api.meowing.de/",
+    "https://capi.3kh0.net/",
+    "https://cobalt.api.timelessnesses.me/",
+  ];
 
-    const gqlRes = await fetch("https://www.instagram.com/graphql/query", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded",
-        "User-Agent":
-          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
-        "X-IG-App-ID": "936619743392459",
-      },
-      body: gqlBody.toString(),
-    });
-
-    if (gqlRes.ok) {
-      const gqlJson = await gqlRes.json();
-      const media = gqlJson?.data?.xdt_shortcode_media;
-      const videoUrl = media?.video_url;
-      if (videoUrl?.startsWith("https://")) {
-        const username = media?.owner?.username;
-        return {
-          title: username ? `Instagram Video (@${username})` : `Instagram Reel (${shortcode})`,
-          links: [
-            { label: "Download MP4 HD (No Watermark)", url: videoUrl, quality: "hd", type: "mp4" },
-            { label: "Download MP4 (Standar)", url: videoUrl, quality: "sd", type: "mp4" },
-          ],
-        };
-      }
+  for (const node of cobaltNodes) {
+    try {
+      const res = await queryCobaltNode(node, canonicalIg);
+      if (res) return res;
+    } catch {
+      continue;
     }
-  } catch {
-    // abaikan jika dibatasi
   }
 
   return null;
@@ -341,35 +319,6 @@ async function fetchFacebookDirect(fullUrl) {
   return { title, links };
 }
 
-// ==========================================
-// 4. CADANGAN CUSTOM EXTRACTOR (OPSIONAL)
-// ==========================================
-async function fetchViaCustomExtractor(targetUrl, env) {
-  if (!env.EXTRACTOR_API_URL) return null;
-  const headers = {
-    "Accept": "application/json",
-    "Content-Type": "application/json",
-  };
-  if (env.EXTRACTOR_API_KEY) {
-    headers["Authorization"] = `Api-Key ${env.EXTRACTOR_API_KEY}`;
-  }
-
-  const res = await fetch(env.EXTRACTOR_API_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ url: targetUrl, videoQuality: "720" }),
-  }).catch(() => null);
-
-  if (!res || !res.ok) return null;
-  const json = await res.json().catch(() => null);
-  if (!json?.url?.startsWith("https://")) return null;
-
-  return {
-    title: json.filename || "7D Media Download",
-    links: [{ label: "Download MP4", url: json.url, quality: "sd", type: "mp4" }],
-  };
-}
-
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -388,23 +337,25 @@ export async function onRequestPost(context) {
     const fullUrl = parsed.toString();
     let result = null;
 
-    if (host.includes("youtube.com") || host === "youtu.be") {
-      result = await fetchYouTubeDirect(parsed);
-    } else if (host.includes("instagram.com")) {
-      result = await fetchInstagramDirect(parsed);
-    } else if (host.includes("facebook.com") || host === "fb.watch") {
-      result = await fetchFacebookDirect(fullUrl);
+    if (env.EXTRACTOR_API_URL) {
+      result = await queryCobaltNode(env.EXTRACTOR_API_URL, fullUrl, env.EXTRACTOR_API_KEY || "");
     }
 
     if (!result) {
-      result = await fetchViaCustomExtractor(fullUrl, env);
+      if (host.includes("youtube.com") || host === "youtu.be") {
+        result = await fetchYouTubeDirect(parsed);
+      } else if (host.includes("instagram.com")) {
+        result = await fetchInstagramDirect(parsed);
+      } else if (host.includes("facebook.com") || host === "fb.watch") {
+        result = await fetchFacebookDirect(fullUrl);
+      }
     }
 
     if (!result) {
       return Response.json(
         {
           ok: false,
-          error: "Video tidak dapat diambil. Pastikan akun/postingan bersifat publik (bukan privat atau khusus teman).",
+          error: "Video tidak dapat diambil. Pastikan akun/postingan bersifat publik atau coba beberapa saat lagi.",
         },
         { status: 502 }
       );
