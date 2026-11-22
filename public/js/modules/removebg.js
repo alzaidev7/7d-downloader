@@ -1,5 +1,82 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
+let _7dRmbgWorker = null;
+let _7dReqSeq = 0;
+const _7dPending = new Map();
+
+function showRbgSparkle(show, msgText) {
+  const rbgSec = document.querySelector("[id*=\"removebg\" i]:not(button)") || document;
+  const canvas = rbgSec.querySelector("canvas");
+  const wrap = canvas?.parentElement;
+  if (!wrap) return;
+
+  if (getComputedStyle(wrap).position === "static") {
+    wrap.style.position = "relative";
+  }
+
+  let ov = document.getElementById("rbgSparkleOverlay");
+  if (!ov) {
+    ov = document.createElement("div");
+    ov.id = "rbgSparkleOverlay";
+    ov.className = "rbg-processing-overlay";
+    ov.innerHTML = `
+      <div class="rbg-sparkle-cluster">
+        <span class="sp-star s1">✦</span>
+        <span class="sp-star s2">✦</span>
+        <span class="sp-star s3">✦</span>
+      </div>
+      <div class="rbg-thumb-spinner"></div>
+      <span id="rbgSparkleLabel" style="font-size:0.84rem;font-weight:700;color:#fff;text-shadow:0 1px 4px #000;text-align:center;padding:0 12px;">Mohon tunggu sebentar ya...</span>
+    `;
+    wrap.appendChild(ov);
+  }
+  const lbl = document.getElementById("rbgSparkleLabel");
+  if (lbl && msgText) lbl.textContent = msgText;
+  ov.style.display = show ? "flex" : "none";
+}
+
+function runRmbgInWorker(imageDataUrl, onStatus) {
+  if (!_7dRmbgWorker) {
+    _7dRmbgWorker = new Worker("/js/workers/rmbg-worker.js", { type: "module" });
+    _7dRmbgWorker.onmessage = (ev) => {
+      const msg = ev.data || {};
+      if (msg.type === "progress") {
+        const txt = `Mohon tunggu sebentar ya... (${msg.progress}%)`;
+        showRbgSparkle(true, txt);
+        if (onStatus) onStatus(txt);
+        return;
+      }
+      if (msg.type === "status") {
+        showRbgSparkle(true, msg.text);
+        if (onStatus) onStatus(msg.text);
+        return;
+      }
+      const item = _7dPending.get(msg.id);
+      if (!item) return;
+      _7dPending.delete(msg.id);
+      showRbgSparkle(false);
+      if (msg.type === "done") {
+        item.resolve({
+          width: msg.width,
+          height: msg.height,
+          mask: new Uint8ClampedArray(msg.maskBuffer),
+        });
+      } else {
+        item.reject(new Error(msg.error || "Worker error"));
+      }
+    };
+  }
+  const id = ++_7dReqSeq;
+  showRbgSparkle(true, "Mohon tunggu sebentar ya...");
+  return new Promise((resolve, reject) => {
+    _7dPending.set(id, { resolve, reject });
+    _7dRmbgWorker.postMessage({ id, imageDataUrl });
+  });
+}
+window.run7DRmbgWorker = runRmbgInWorker;
+window.show7DRbgSparkle = showRbgSparkle;
+
+
 let rmbgPipelinePromise = null;
 
 async function getGeneralRmbgPipeline(onProgress) {
