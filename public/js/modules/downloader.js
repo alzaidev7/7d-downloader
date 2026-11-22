@@ -135,7 +135,7 @@ export function initDownloaderModule() {
   btnRun.addEventListener("click", async () => {
     if (!guardActionAgainstAdblock()) return;
     const rawUrl = urlInput.value.trim();
-    if (!rawUrl.startsWith("https://")) {
+    const urlMatch = rawUrl.match(/https:\/\/[^\s]+/); if (!urlMatch) {
       return alert("Masukkan tautan valid yang diawali https://");
     }
 
@@ -147,7 +147,7 @@ export function initDownloaderModule() {
       const res = await fetch("/api/download", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: rawUrl }),
+        body: JSON.stringify({ url: urlMatch[0] }),
       });
       const json = await res.json();
 

@@ -6,8 +6,10 @@ const ALLOWED_HOSTS = new Set([
 ]);
 
 function parseAllowedUrl(raw) {
+  const match = String(raw || "").match(/https:\/\/[^\s"'<>]+/);
+  if (!match) return null;
   try {
-    const parsed = new URL(raw);
+    const parsed = new URL(match[0]);
     if (parsed.protocol !== "https:") return null;
     const host = parsed.hostname.toLowerCase();
     if (!ALLOWED_HOSTS.has(host)) return null;
@@ -17,56 +19,108 @@ function parseAllowedUrl(raw) {
   }
 }
 
-async function fetchTikTokMedia(targetUrl) {
-  const form = new URLSearchParams();
-  form.set("url", targetUrl);
-  form.set("hd", "1");
-
-  const res = await fetch("https://www.tikwm.com/api/", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "Mozilla/5.0",
-    },
-    body: form.toString(),
-  });
-
-  if (!res.ok) return null;
-  const json = await res.json();
-  if (json?.code !== 0 || !json?.data) return null;
-
-  const d = json.data;
-  const links = [];
-
-  if (d.hdplay && d.hdplay.startsWith("https://")) {
-    links.push({
-      label: "Download MP4 HD (No Watermark)",
-      url: d.hdplay,
-      quality: "hd",
-      type: "mp4",
+async function resolveTikTokUrl(url) {
+  try {
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Linux; Android 13; SM-G991B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+      },
     });
+    const finalUrl = res.url || url;
+    const html = await res.text();
+    return { finalUrl: finalUrl.split("?")[0], html };
+  } catch {
+    return { finalUrl: url, html: "" };
   }
-  if (d.play && d.play.startsWith("https://")) {
-    links.push({
-      label: "Download MP4 (No Watermark)",
-      url: d.play,
-      quality: "sd",
-      type: "mp4",
-    });
-  }
-  if (d.music && d.music.startsWith("https://")) {
-    links.push({
-      label: "Download MP3 (Audio Original)",
-      url: d.music,
-      quality: "audio",
-      type: "mp3",
-    });
-  }
-
-  return links.length ? { title: d.title || "TikTok Video", links } : null;
 }
 
-async function fetchViaCustomCobalt(targetUrl, env) {
+function extractFromTikTokHtml(html) {
+  if (!html) return null;
+  try {
+    const match = html.match(
+      /<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__"[^>]*>([\s\S]*?)<\/script>/
+    );
+    if (!match) return null;
+    const json = JSON.parse(match[1]);
+    const detail =
+      json?.__DEFAULT_SCOPE__?.["webapp.video-detail"]?.itemInfo?.itemStruct;
+    if (!detail) return null;
+
+    const links = [];
+    const videoUrl = detail.video?.playAddr || detail.video?.downloadAddr;
+    const hdUrl =
+      detail.video?.bitrateInfo?.[0]?.PlayAddr?.UrlList?.[0] || videoUrl;
+    const musicUrl = detail.music?.playUrl;
+
+    if (hdUrl && hdUrl.startsWith("https://")) {
+      links.push({
+        label: "Download MP4 HD (No Watermark)",
+        url: hdUrl,
+        quality: "hd",
+        type: "mp4",
+      });
+    }
+    if (videoUrl && videoUrl.startsWith("https://")) {
+      links.push({
+        label: "Download MP4 (Standar)",
+        url: videoUrl,
+        quality: "sd",
+        type: "mp4",
+      });
+    }
+    if (musicUrl && musicUrl.startsWith("https://")) {
+      links.push({
+        label: "Download MP3 (Audio Original)",
+        url: musicUrl,
+        quality: "audio",
+        type: "mp3",
+      });
+    }
+
+    return links.length
+      ? { title: detail.desc || "TikTok Video", links }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchTikTokViaTikWm(cleanUrl) {
+  try {
+    const apiUrl = `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}&hd=1`;
+    const res = await fetch(apiUrl, {
+      headers: {
+        "Accept": "application/json",
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124.0.0.0 Safari/537.36",
+        "Referer": "https://www.tikwm.com/",
+      },
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (json?.code !== 0 || !json?.data) return null;
+
+    const d = json.data;
+    const links = [];
+    if (d.hdplay?.startsWith("https://")) {
+      links.push({ label: "Download MP4 HD (No Watermark)", url: d.hdplay, quality: "hd", type: "mp4" });
+    }
+    if (d.play?.startsWith("https://")) {
+      links.push({ label: "Download MP4 (No Watermark)", url: d.play, quality: "sd", type: "mp4" });
+    }
+    if (d.music?.startsWith("https://")) {
+      links.push({ label: "Download MP3 (Audio Original)", url: d.music, quality: "audio", type: "mp3" });
+    }
+    return links.length ? { title: d.title || "TikTok Video", links } : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchViaCustomExtractor(targetUrl, env) {
   if (!env.EXTRACTOR_API_URL) return null;
   const headers = {
     "Accept": "application/json",
@@ -125,7 +179,7 @@ export async function onRequestPost(context) {
 
   try {
     const body = await request.json();
-    const parsed = parseAllowedUrl(String(body?.url || "").trim());
+    const parsed = parseAllowedUrl(body?.url);
 
     if (!parsed) {
       return Response.json(
@@ -139,11 +193,17 @@ export async function onRequestPost(context) {
     let result = null;
 
     if (host.includes("tiktok.com")) {
-      result = await fetchTikTokMedia(fullUrl);
+      const { finalUrl, html } = await resolveTikTokUrl(fullUrl);
+      // Jalur 1: TikWM dengan URL penuh yang sudah di-resolve
+      result = await fetchTikTokViaTikWm(finalUrl);
+      // Jalur 2: Ekstrak langsung dari data halaman resmi TikTok
+      if (!result) {
+        result = extractFromTikTokHtml(html);
+      }
     }
 
     if (!result) {
-      result = await fetchViaCustomCobalt(fullUrl, env);
+      result = await fetchViaCustomExtractor(fullUrl, env);
     }
 
     if (!result) {
@@ -151,7 +211,7 @@ export async function onRequestPost(context) {
         {
           ok: false,
           error: host.includes("tiktok.com")
-            ? "Video TikTok tidak ditemukan atau bersifat privat."
+            ? "Gagal mengambil video TikTok. Coba salin ulang tautan langsung dari tombol Bagikan."
             : "Untuk platform non-TikTok, atur EXTRACTOR_API_URL di Environment Variables Cloudflare Pages.",
         },
         { status: 502 }
