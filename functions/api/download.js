@@ -27,36 +27,25 @@ function extractYouTubeId(parsed) {
   if (host === "youtu.be") {
     return parsed.pathname.slice(1).split("/")[0];
   }
-  if (parsed.pathname.startsWith("/shorts/")) {
-    return parsed.pathname.split("/")[2];
-  }
-  if (parsed.pathname.startsWith("/embed/")) {
-    return parsed.pathname.split("/")[2];
+  const pathMatch = parsed.pathname.match(/^\/(shorts|embed|live|v)\/([A-Za-z0-9_-]{11})/);
+  if (pathMatch) {
+    return pathMatch[2];
   }
   return parsed.searchParams.get("v");
 }
 
-async function fetchYouTubeDirect(parsed) {
-  const videoId = extractYouTubeId(parsed);
-  if (!videoId) return null;
-
+async function queryYouTubeClient(videoId, clientConfig, userAgent) {
   const res = await fetch("https://www.youtube.com/youtubei/v1/player?prettyPrint=false", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "User-Agent": "com.google.ios.youtube/19.29.1 (iPhone16,2; U; CPU iOS 17_5_1 like Mac OS X;)",
+      "User-Agent": userAgent,
     },
     body: JSON.stringify({
       videoId,
       context: {
-        client: {
-          clientName: "IOS",
-          clientVersion: "19.29.1",
-          deviceMake: "Apple",
-          deviceModel: "iPhone16,2",
-          hl: "id",
-          gl: "ID",
-        },
+        client: clientConfig,
+        thirdParty: { embedUrl: "https://www.youtube.com/" },
       },
     }),
   });
@@ -67,25 +56,21 @@ async function fetchYouTubeDirect(parsed) {
   if (!streaming) return null;
 
   const title = data?.videoDetails?.title || "YouTube Video";
-  const links = [];
-
   const formats = streaming.formats || [];
   const adaptive = streaming.adaptiveFormats || [];
 
-  // Video dengan audio (muxed MP4)
   const hdMuxed = formats.find((f) => f.url && (f.height >= 720 || f.itag === 22));
-  const sdMuxed = formats.find((f) => f.url && (f.itag === 18 || f.height <= 480)) || formats.find((f) => f.url);
-
-  // Adaptive 1080p/720p jika muxed HD tidak tersedia
+  const sdMuxed =
+    formats.find((f) => f.url && (f.itag === 18 || f.height <= 480)) ||
+    formats.find((f) => f.url);
   const hdAdaptive = adaptive.find(
     (f) => f.url && f.mimeType?.includes("video/mp4") && f.height >= 720
   );
-
-  // Audio M4A / MP3 stream
   const audioStream = adaptive.find(
     (f) => f.url && f.mimeType?.includes("audio/mp4")
   );
 
+  const links = [];
   if (hdMuxed?.url) {
     links.push({
       label: `Download MP4 HD (${hdMuxed.qualityLabel || "720p"})`,
@@ -123,55 +108,192 @@ async function fetchYouTubeDirect(parsed) {
   return links.length ? { title, links } : null;
 }
 
+async function fetchYouTubeDirect(parsed) {
+  const videoId = extractYouTubeId(parsed);
+  if (!videoId) return null;
+
+  // Jalur 1: Embedded TV Client (paling tahan blokir bot IP datacenter)
+  let result = await queryYouTubeClient(
+    videoId,
+    {
+      clientName: "TVHTML5_SIMPLY_EMBEDDED_PLAYER",
+      clientVersion: "2.0",
+      hl: "id",
+      gl: "ID",
+    },
+    "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 TV Safari/537.36"
+  );
+  if (result) return result;
+
+  // Jalur 2: Android VR Client
+  result = await queryYouTubeClient(
+    videoId,
+    {
+      clientName: "ANDROID_VR",
+      clientVersion: "1.56.21",
+      deviceMake: "Oculus",
+      deviceModel: "Quest 3",
+      osName: "Android",
+      osVersion: "12L",
+      hl: "id",
+      gl: "ID",
+    },
+    "com.google.android.apps.youtube.vr.oculus/1.56.21 (Linux; U; Android 12L; eureka-user Build/SQ3A.220605.009.A1) gzip"
+  );
+  if (result) return result;
+
+  // Jalur 3: Cadangan Piped Public API
+  const pipedNodes = [
+    "https://api.piped.private.coffee",
+    "https://pipedapi.kavin.rocks",
+  ];
+  for (const node of pipedNodes) {
+    try {
+      const res = await fetch(`${node}/streams/${videoId}`, {
+        headers: { "User-Agent": "7D-Downloader/1.0" },
+      });
+      if (!res.ok) continue;
+      const json = await res.json();
+      const videoStreams = (json.videoStreams || []).filter(
+        (s) => s.url && s.format === "MPEG_4" && !s.videoOnly
+      );
+      const audioStreams = (json.audioStreams || []).filter((s) => s.url);
+
+      const links = [];
+      const hd = videoStreams.find((s) => parseInt(s.quality, 10) >= 720);
+      const sd = videoStreams[0];
+
+      if (hd) {
+        links.push({ label: `Download MP4 HD (${hd.quality})`, url: hd.url, quality: "hd", type: "mp4" });
+      }
+      if (sd) {
+        links.push({ label: `Download MP4 (${sd.quality})`, url: sd.url, quality: "sd", type: "mp4" });
+      }
+      if (audioStreams[0]) {
+        links.push({ label: "Download Audio (M4A / MP3)", url: audioStreams[0].url, quality: "audio", type: "mp3" });
+      }
+      if (links.length) {
+        return { title: json.title || "YouTube Video", links };
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+}
+
 // ==========================================
-// 2. EKSTRAKTOR INSTAGRAM (REELS & POST)
+// 2. EKSTRAKTOR INSTAGRAM (REELS, SHARE & POST)
 // ==========================================
+function decodeJsonString(raw) {
+  try {
+    return JSON.parse(`"${raw}"`);
+  } catch {
+    return raw.replace(/\\\//g, "/").replace(/\\u0026/g, "&");
+  }
+}
+
 async function fetchInstagramDirect(parsed) {
-  const match = parsed.pathname.match(/\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
+  let targetPath = parsed.pathname;
+
+  // Jika link berbentuk /share/reel/... atau /share/p/..., ikuti redirect dulu
+  if (targetPath.includes("/share/")) {
+    try {
+      const redirRes = await fetch(parsed.toString(), {
+        redirect: "follow",
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        },
+      });
+      targetPath = new URL(redirRes.url).pathname;
+    } catch {
+      // lanjut pakai path awal
+    }
+  }
+
+  const match = targetPath.match(/\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
   if (!match) return null;
   const shortcode = match[2];
 
+  // Jalur 1: Embed Captioned Page (mendukung URL ter-escape \/)
   const embedUrl = `https://www.instagram.com/p/${shortcode}/embed/captioned/`;
   const res = await fetch(embedUrl, {
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-      "Accept": "text/html,application/xhtml+xml",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+      "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
     },
   });
 
-  if (!res.ok) return null;
-  const html = await res.text();
+  if (res.ok) {
+    const html = await res.text();
+    const patterns = [
+      /"video_url"\s*:\s*"(https?:[^"]+)"/,
+      /"url"\s*:\s*"(https?:[^"]+\.mp4[^"]*)"/,
+    ];
 
-  const videoMatches = [...html.matchAll(/"video_url":"(https:[^"]+)"/g)];
-  if (!videoMatches.length) return null;
+    for (const regex of patterns) {
+      const m = html.match(regex);
+      if (m) {
+        const videoUrl = decodeJsonString(m[1]);
+        if (videoUrl.startsWith("https://")) {
+          const userMatch = html.match(/class="CaptionUsername"[^>]*>([^<]+)</);
+          const title = userMatch
+            ? `Instagram Video (@${userMatch[1].trim()})`
+            : `Instagram Reel (${shortcode})`;
 
-  const cleanVideoUrl = JSON.parse(`"${videoMatches[0][1]}"`);
-  if (!cleanVideoUrl.startsWith("https://")) return null;
+          return {
+            title,
+            links: [
+              { label: "Download MP4 HD (No Watermark)", url: videoUrl, quality: "hd", type: "mp4" },
+              { label: "Download MP4 (Standar)", url: videoUrl, quality: "sd", type: "mp4" },
+            ],
+          };
+        }
+      }
+    }
+  }
 
-  const captionMatch = html.match(/class="CaptionUsername"[^>]*>([^<]+)</);
-  const title = captionMatch
-    ? `Instagram Video (@${captionMatch[1].trim()})`
-    : `Instagram Reel (${shortcode})`;
+  // Jalur 2: Public GraphQL Anonymous Query
+  try {
+    const gqlBody = new URLSearchParams();
+    gqlBody.set("variables", JSON.stringify({ shortcode }));
+    gqlBody.set("doc_id", "8845758582119845");
 
-  return {
-    title,
-    links: [
-      {
-        label: "Download MP4 HD (No Watermark)",
-        url: cleanVideoUrl,
-        quality: "hd",
-        type: "mp4",
+    const gqlRes = await fetch("https://www.instagram.com/graphql/query", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "User-Agent":
+          "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+        "X-IG-App-ID": "936619743392459",
       },
-      {
-        label: "Download MP4 (Standar)",
-        url: cleanVideoUrl,
-        quality: "sd",
-        type: "mp4",
-      },
-    ],
-  };
+      body: gqlBody.toString(),
+    });
+
+    if (gqlRes.ok) {
+      const gqlJson = await gqlRes.json();
+      const media = gqlJson?.data?.xdt_shortcode_media;
+      const videoUrl = media?.video_url;
+      if (videoUrl?.startsWith("https://")) {
+        const username = media?.owner?.username;
+        return {
+          title: username ? `Instagram Video (@${username})` : `Instagram Reel (${shortcode})`,
+          links: [
+            { label: "Download MP4 HD (No Watermark)", url: videoUrl, quality: "hd", type: "mp4" },
+            { label: "Download MP4 (Standar)", url: videoUrl, quality: "sd", type: "mp4" },
+          ],
+        };
+      }
+    }
+  } catch {
+    // abaikan jika dibatasi
+  }
+
+  return null;
 }
 
 // ==========================================
@@ -197,25 +319,15 @@ async function fetchFacebookDirect(fullUrl) {
 
   const links = [];
   if (hdMatch) {
-    const hdUrl = JSON.parse(`"${hdMatch[1]}"`);
+    const hdUrl = decodeJsonString(hdMatch[1]);
     if (hdUrl.startsWith("https://")) {
-      links.push({
-        label: "Download MP4 HD",
-        url: hdUrl,
-        quality: "hd",
-        type: "mp4",
-      });
+      links.push({ label: "Download MP4 HD", url: hdUrl, quality: "hd", type: "mp4" });
     }
   }
   if (sdMatch) {
-    const sdUrl = JSON.parse(`"${sdMatch[1]}"`);
+    const sdUrl = decodeJsonString(sdMatch[1]);
     if (sdUrl.startsWith("https://")) {
-      links.push({
-        label: "Download MP4 (Standar)",
-        url: sdUrl,
-        quality: "sd",
-        type: "mp4",
-      });
+      links.push({ label: "Download MP4 (Standar)", url: sdUrl, quality: "sd", type: "mp4" });
     }
   }
 
@@ -254,9 +366,7 @@ async function fetchViaCustomExtractor(targetUrl, env) {
 
   return {
     title: json.filename || "7D Media Download",
-    links: [
-      { label: "Download MP4", url: json.url, quality: "sd", type: "mp4" },
-    ],
+    links: [{ label: "Download MP4", url: json.url, quality: "sd", type: "mp4" }],
   };
 }
 
