@@ -1,4 +1,4 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
+import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=8";
 
 let srPipelinePromise = null;
 
@@ -29,8 +29,8 @@ function applyUnsharpAndClarity(ctx, width, height, sharpnessPct, clarityPct) {
   const src = imgData.data;
   const out = new Uint8ClampedArray(src.length);
 
-  const amount = (sharpnessPct / 100) * 1.35;
-  const contrast = 1 + (clarityPct / 100) * 0.24;
+  const amount = (sharpnessPct / 100) * 1.45;
+  const contrast = 1 + (clarityPct / 100) * 0.26;
   const w4 = width * 4;
 
   for (let y = 0; y < height; y++) {
@@ -95,6 +95,58 @@ function stepUpscaleCanvas(sourceCanvas, targetW, targetH) {
   return finalC;
 }
 
+function openHdAdGate(onComplete) {
+  let modal = document.getElementById("upAdGateModal");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "upAdGateModal";
+    modal.style.cssText =
+      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.82);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px;";
+    modal.innerHTML = `
+      <div style="width:100%;max-width:360px;background:#141418;border:1px solid rgba(255,255,255,0.14);border-radius:18px;padding:18px;text-align:center;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,0.65);">
+        <div style="font-size:0.75rem;font-weight:700;color:#10b981;letter-spacing:0.5px;margin-bottom:4px;">7D ULTRA HD EXPORT</div>
+        <h3 style="margin:0 0 6px 0;font-size:1.05rem;">Menyiapkan Foto HD Anda...</h3>
+        <p style="margin:0 0 12px 0;font-size:0.8rem;opacity:0.72;">Unduhan otomatis dimulai setelah hitungan sponsor selesai.</p>
+        <div id="upAdGateBanner" style="min-height:90px;border-radius:12px;background:rgba(255,255,255,0.04);border:1px dashed rgba(255,255,255,0.14);display:flex;align-items:center;justify-content:center;margin-bottom:14px;font-size:0.75rem;opacity:0.65;">
+          Sponsor / Iklan 7D
+        </div>
+        <button type="button" id="btnUpAdGateAction" disabled style="width:100%;padding:11px;border-radius:12px;border:none;background:#10b981;color:#052e16;font-weight:800;font-size:0.88rem;cursor:pointer;">
+          Tunggu 5 detik...
+        </button>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  modal.style.display = "flex";
+  const btn = document.getElementById("btnUpAdGateAction");
+  let sec = 5;
+  btn.disabled = true;
+  btn.style.opacity = "0.65";
+  btn.textContent = `Menyiapkan HD (${sec}d)...`;
+
+  const timer = setInterval(() => {
+    sec -= 1;
+    if (sec > 0) {
+      btn.textContent = `Menyiapkan HD (${sec}d)...`;
+    } else {
+      clearInterval(timer);
+      btn.disabled = false;
+      btn.style.opacity = "1";
+      btn.textContent = "Unduh Foto HD Sekarang";
+      modal.style.display = "none";
+      onComplete();
+    }
+  }, 1000);
+
+  btn.onclick = () => {
+    if (btn.disabled) return;
+    clearInterval(timer);
+    modal.style.display = "none";
+    onComplete();
+  };
+}
+
 export function initUpscalerModule() {
   const fileInput = document.getElementById("upFileInput");
   const dropZone = document.getElementById("upUploadDrop");
@@ -104,25 +156,26 @@ export function initUpscalerModule() {
   const canvasBefore = document.getElementById("upCanvasBefore");
   const sliderHandle = document.getElementById("upSliderHandle");
   const infoBadge = document.getElementById("upResBadge");
+  const loadingOverlay = document.getElementById("upSparkleOverlay");
 
   if (!fileInput || !canvasAfter || !canvasBefore) return;
 
   let originalBitmap = null;
   let originalFileName = "photo";
   let scaleFactor = 2;
-  let enhanceMode = "instant"; // "instant" | "ai"
-  let sharpnessVal = 55;
-  let clarityVal = 35;
+  let presetMode = "ultrahd"; // "original" | "ultrahd" | "uhdai"
+  let sharpnessVal = 62;
+  let clarityVal = 40;
   let splitRatio = 0.5;
   let isSliding = false;
   let baseAiCanvas = null;
 
   function updateSplitPosition(clientX) {
-    if (!compareBox) return;
+    if (!compareBox || presetMode === "original") return;
     const rect = compareBox.getBoundingClientRect();
     if (!rect.width) return;
     const rel = (clientX - rect.left) / rect.width;
-    splitRatio = Math.max(0.03, Math.min(0.97, rel));
+    splitRatio = Math.max(0.02, Math.min(0.98, rel));
     const pct = (splitRatio * 100).toFixed(2);
     canvasBefore.style.clipPath = `inset(0 ${100 - pct}% 0 0)`;
     if (sliderHandle) {
@@ -152,11 +205,13 @@ export function initUpscalerModule() {
     const statusEl = document.getElementById("upStatusText");
     const btnDownload = document.getElementById("btnUpDownload");
     if (btnDownload) btnDownload.disabled = true;
+    if (loadingOverlay) loadingOverlay.style.display = "flex";
 
     const origW = originalBitmap.width;
     const origH = originalBitmap.height;
-    const targetW = Math.min(3840, origW * scaleFactor);
-    const targetH = Math.min(3840, origH * scaleFactor);
+    const activeScale = presetMode === "original" ? 1 : scaleFactor;
+    const targetW = Math.min(3840, origW * activeScale);
+    const targetH = Math.min(3840, origH * activeScale);
 
     canvasBefore.width = targetW;
     canvasBefore.height = targetH;
@@ -169,15 +224,19 @@ export function initUpscalerModule() {
     const aCtx = canvasAfter.getContext("2d");
 
     try {
-      if (enhanceMode === "ai") {
+      if (presetMode === "original") {
+        aCtx.drawImage(originalBitmap, 0, 0, targetW, targetH);
+        canvasBefore.style.clipPath = "inset(0 100% 0 0)";
+        if (sliderHandle) sliderHandle.style.display = "none";
+        if (statusEl) statusEl.textContent = "Menampilkan foto asli tanpa peningkatan";
+      } else if (presetMode === "uhdai") {
         if (!baseAiCanvas) {
-          if (statusEl) statusEl.textContent = "Memuat model AI Super-Resolution...";
+          if (statusEl) statusEl.textContent = "Memuat AI UHD Super-Resolution...";
           const sr = await getSuperResPipeline((pct) => {
-            if (statusEl) statusEl.textContent = `Mengunduh AI Enhancer (${pct}%)...`;
+            if (statusEl) statusEl.textContent = `Mengunduh model UHD AI (${pct}%)...`;
           });
-          if (statusEl) statusEl.textContent = "Merekonstruksi detail piksel AI...";
+          if (statusEl) statusEl.textContent = "Merekonstruksi piksel UHD AI...";
 
-          // Batasi input AI max 512px agar cepat & aman di memori browser HP
           const aiInScale = Math.min(1, 512 / Math.max(origW, origH));
           const aiW = Math.max(32, Math.round(origW * aiInScale));
           const aiH = Math.max(32, Math.round(origH * aiInScale));
@@ -186,17 +245,21 @@ export function initUpscalerModule() {
           tempIn.height = aiH;
           tempIn.getContext("2d").drawImage(originalBitmap, 0, 0, aiW, aiH);
 
-          const dataUrl = tempIn.toDataURL("image/png");
-          const outRaw = await sr(dataUrl);
-          const aiCanvas = outRaw.toCanvas();
-          baseAiCanvas = aiCanvas;
+          const outRaw = await sr(tempIn.toDataURL("image/png"));
+          baseAiCanvas = outRaw.toCanvas();
         }
 
         const upscaledAi = stepUpscaleCanvas(baseAiCanvas, targetW, targetH);
         aCtx.drawImage(upscaledAi, 0, 0, targetW, targetH);
-        applyUnsharpAndClarity(aCtx, targetW, targetH, Math.round(sharpnessVal * 0.7), clarityVal);
+        applyUnsharpAndClarity(aCtx, targetW, targetH, Math.round(sharpnessVal * 0.72), clarityVal);
+
+        if (sliderHandle) sliderHandle.style.display = "block";
+        canvasBefore.style.clipPath = `inset(0 ${100 - splitRatio * 100}% 0 0)`;
+        if (statusEl) statusEl.textContent = "Peningkat Kualitas - UHD AI • Geser untuk membandingkan";
       } else {
-        if (statusEl) statusEl.textContent = "Meningkatkan ketajaman HD...";
+        if (statusEl) statusEl.textContent = "Memproses Peningkat Kualitas - Ultra HD...";
+        await new Promise((r) => setTimeout(r, 120));
+
         const srcC = document.createElement("canvas");
         srcC.width = origW;
         srcC.height = origH;
@@ -205,18 +268,22 @@ export function initUpscalerModule() {
         const upscaled = stepUpscaleCanvas(srcC, targetW, targetH);
         aCtx.drawImage(upscaled, 0, 0, targetW, targetH);
         applyUnsharpAndClarity(aCtx, targetW, targetH, sharpnessVal, clarityVal);
+
+        if (sliderHandle) sliderHandle.style.display = "block";
+        canvasBefore.style.clipPath = `inset(0 ${100 - splitRatio * 100}% 0 0)`;
+        if (statusEl) statusEl.textContent = "Peningkat Kualitas - Ultra HD • Geser untuk membandingkan";
       }
 
       if (infoBadge) {
-        infoBadge.textContent = `${origW}×${origH} → ${targetW}×${targetH} (${scaleFactor}x HD)`;
+        infoBadge.textContent =
+          presetMode === "original"
+            ? `${origW}×${origH} (Asli)`
+            : `${origW}×${origH} → ${targetW}×${targetH} (${scaleFactor}x HD)`;
       }
-      if (statusEl) {
-        statusEl.textContent = "Geser garis tengah untuk membandingkan Before / After";
-      }
-      canvasBefore.style.clipPath = `inset(0 ${100 - splitRatio * 100}% 0 0)`;
     } catch (err) {
-      if (statusEl) statusEl.textContent = "Gagal memproses AI: " + err.message;
+      if (statusEl) statusEl.textContent = "Gagal memproses: " + err.message;
     } finally {
+      if (loadingOverlay) loadingOverlay.style.display = "none";
       if (btnDownload) btnDownload.disabled = false;
     }
   }
@@ -234,12 +301,20 @@ export function initUpscalerModule() {
     originalFileName = file.name.replace(/\.[^.]+$/, "") || "photo";
     originalBitmap = await createImageBitmap(file);
     baseAiCanvas = null;
+    presetMode = "ultrahd";
+
+    document.querySelectorAll("[data-wink-mode]").forEach((b) => {
+      b.classList.toggle("active", b.dataset.winkMode === "ultrahd");
+    });
 
     dropZone?.classList.add("hidden");
-    if (editorWrap) { editorWrap.classList.remove("hidden"); editorWrap.style.display = "flex"; }
+    if (editorWrap) {
+      editorWrap.classList.remove("hidden");
+      editorWrap.style.display = "flex";
+    }
 
     await renderEnhancedResult();
-    saveLocalHistory("upscaler", file.name, `${scaleFactor}x HD Enhancer`);
+    saveLocalHistory("upscaler", file.name, `${scaleFactor}x Ultra HD`);
   });
 
   document.getElementById("btnUpChangePhoto")?.addEventListener("click", () => {
@@ -247,20 +322,28 @@ export function initUpscalerModule() {
     fileInput.click();
   });
 
+  document.getElementById("btnUpToggleIntensity")?.addEventListener("click", () => {
+    const panel = document.getElementById("upIntensityPanel");
+    if (!panel) return;
+    const isHidden = panel.style.display === "none" || !panel.style.display;
+    panel.style.display = isHidden ? "flex" : "none";
+  });
+
+  document.querySelectorAll("[data-wink-mode]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      document.querySelectorAll("[data-wink-mode]").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      presetMode = btn.dataset.winkMode || "ultrahd";
+      await renderEnhancedResult();
+    });
+  });
+
   document.querySelectorAll("[data-upscale-factor]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       document.querySelectorAll("[data-upscale-factor]").forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
       scaleFactor = Number(btn.dataset.upscaleFactor) || 2;
-      await renderEnhancedResult();
-    });
-  });
-
-  document.querySelectorAll("[data-upscale-mode]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      document.querySelectorAll("[data-upscale-mode]").forEach((b) => b.classList.remove("active"));
-      btn.classList.add("active");
-      enhanceMode = btn.dataset.upscaleMode || "instant";
+      if (presetMode === "original") presetMode = "ultrahd";
       await renderEnhancedResult();
     });
   });
@@ -277,12 +360,24 @@ export function initUpscalerModule() {
 
   document.getElementById("btnUpDownload")?.addEventListener("click", () => {
     if (!guardActionAgainstAdblock() || !canvasAfter.width) return;
+
+    // Trigger direct link pengiklan jika tersedia
     if (typeof window.trigger7DAdSlot5 === "function") {
       window.trigger7DAdSlot5();
     }
-    const a = document.createElement("a");
-    a.href = canvasAfter.toDataURL("image/png");
-    a.download = `7d-hd-${scaleFactor}x-${originalFileName}.png`;
-    a.click();
+
+    const triggerFileDownload = () => {
+      const a = document.createElement("a");
+      a.href = canvasAfter.toDataURL("image/png");
+      a.download = `7d-ultrahd-${scaleFactor}x-${originalFileName}.png`;
+      a.click();
+    };
+
+    // Pakai Ad-Gate 5 detik dari app.js jika tersedia, atau modal Ad-Gate HD bawaan
+    if (typeof window.open7DAdGate === "function") {
+      window.open7DAdGate(triggerFileDownload);
+    } else {
+      openHdAdGate(triggerFileDownload);
+    }
   });
 }
