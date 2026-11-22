@@ -1,0 +1,12 @@
+name = "7d-downloader"
+compatibility_date = "2026-11-01"
+pages_build_output_dir = "public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "7d_downloader_db"
+database_id = "bba85a85-7bb5-4945-9469-4fbfd2c3f661"
+
+[[kv_namespaces]]
+binding = "QR_KV"
+id = "1a6c175430a74d7888d4f8584c0dc25e"
