@@ -29,37 +29,6 @@ async function getGeneralRmbgPipeline(onProgress) {
 }
 
 export function initRemoveBgModule() {
-  setTimeout(() => {
-    const rbgPanel = document.getElementById("tab-removebg");
-    const canvasEl = rbgPanel?.querySelector("canvas");
-    const wrap = canvasEl?.parentElement;
-    if (wrap && !document.getElementById("rbgSparkleOverlay")) {
-      if (getComputedStyle(wrap).position === "static") wrap.style.position = "relative";
-      const ov = document.createElement("div");
-      ov.id = "rbgSparkleOverlay";
-      ov.className = "rbg-processing-overlay";
-      ov.style.display = "none";
-      ov.innerHTML = `
-        <div class="rbg-sparkle-cluster">
-          <span class="sp-star s1">✦</span>
-          <span class="sp-star s2">✦</span>
-          <span class="sp-star s3">✦</span>
-        </div>
-        <div class="rbg-thumb-spinner"></div>
-        <span style="font-size:0.8rem;font-weight:700;color:#fff;text-shadow:0 1px 4px #000;">Memproses AI Remove BG...</span>
-      `;
-      wrap.appendChild(ov);
-
-      const statusNode = rbgPanel.querySelector("[id*=status i], .status-text, p");
-      if (statusNode) {
-        new MutationObserver(() => {
-          const t = (statusNode.textContent || "").toLowerCase();
-          const busy = t.includes("memproses") || t.includes("mengunduh") || t.includes("memuat") || t.includes("menghapus");
-          ov.style.display = busy ? "flex" : "none";
-        }).observe(statusNode, { childList: true, characterData: true, subtree: true });
-      }
-    }
-  }, 150);
   const fileInput = document.getElementById("bgFileInput");
   const dropZone = document.getElementById("bgUploadDrop");
   const editorWrap = document.getElementById("bgEditorWrap");
@@ -834,54 +803,3 @@ export function initRemoveBgModule() {
     a.click();
   });
 }
-
-// rbgProcessingObserver: Tampilkan overlay sparkle ala remove.bg saat proses AI berjalan
-(() => {
-  const statusEl = document.getElementById("rbgStatusText") || document.querySelector("#tab-removebg [id*="status" i], #tab-removebg .status-text");
-  const stageEl = document.getElementById("rbgCanvasWrap") || document.querySelector("#tab-removebg canvas")?.parentElement;
-  if (!stageEl) return;
-
-  if (getComputedStyle(stageEl).position === "static") {
-    stageEl.style.position = "relative";
-  }
-
-  const overlay = document.createElement("div");
-  overlay.className = "rbg-processing-overlay";
-  overlay.style.display = "none";
-  overlay.innerHTML = `
-    <div class="rbg-sparkle-cluster">
-      <span class="sp-star s1">✦</span>
-      <span class="sp-star s2">✦</span>
-      <span class="sp-star s3">✦</span>
-    </div>
-    <div class="rbg-thumb-spinner"></div>
-    <span id="rbgSparkleMsg" style="font-size:0.8rem;font-weight:700;color:#fff;text-shadow:0 1px 4px #000;">Memproses penghapusan latar...</span>
-  `;
-  stageEl.appendChild(overlay);
-
-  const syncProcessingState = () => {
-    const txt = (statusEl?.textContent || "").toLowerCase();
-    const isBusy = txt.includes("memproses") || txt.includes("mengunduh") || txt.includes("memuat") || txt.includes("menghapus");
-    overlay.style.display = isBusy ? "flex" : "none";
-    const msgEl = document.getElementById("rbgSparkleMsg");
-    if (msgEl && statusEl?.textContent) msgEl.textContent = statusEl.textContent;
-
-    const activeThumb = document.querySelector("#tab-removebg .thumb-item.active, #tab-removebg [data-index].active");
-    if (activeThumb) {
-      let sp = activeThumb.querySelector(".rbg-thumb-spinner");
-      if (isBusy && !sp) {
-        sp = document.createElement("div");
-        sp.className = "rbg-thumb-spinner";
-        sp.style.cssText = "position:absolute;inset:0;margin:auto;z-index:5;";
-        activeThumb.style.position = "relative";
-        activeThumb.appendChild(sp);
-      } else if (!isBusy && sp) {
-        sp.remove();
-      }
-    }
-  };
-
-  if (statusEl) {
-    new MutationObserver(syncProcessingState).observe(statusEl, { childList: true, characterData: true, subtree: true });
-  }
-})();
