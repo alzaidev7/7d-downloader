@@ -16,29 +16,24 @@ export function initRemoveBgModule() {
   const topTools = document.getElementById("bgTopTools");
   const canvas = document.getElementById("bgCanvasOutput");
   if (!canvas || !fileInput) return;
+
+  // Izinkan pilih banyak foto sekaligus dari galeri
+  fileInput.multiple = true;
   const ctx = canvas.getContext("2d");
 
-  const originalCanvas = document.createElement("canvas");
-  const maskCanvas = document.createElement("canvas");
-  const maskCtx = maskCanvas.getContext("2d");
   const cutoutCanvas = document.createElement("canvas");
   const cutoutCtx = cutoutCanvas.getContext("2d");
 
-  let bgMode = "transparent";
-  let bgPhotoImg = null;
-  let blurAmount = 0;
-  let shadowAmount = 0;
-  let stickerText = "";
-  let stickerColor = "#ffffff";
+  // Daftar sesi multi-foto (seperti tab thumbnail di remove.bg)
+  const sessions = [];
+  let activeSessionId = null;
+
   let brushMode = "erase";
   let brushSize = 18;
   let isDrawing = false;
   let showOriginal = false;
 
-  // State Zoom & Pan
-  let zoomLevel = 1;
-  let panX = 0;
-  let panY = 0;
+  // State Gesture Zoom & Pan
   const activePointers = new Map();
   let pinchStartDist = 0;
   let pinchStartZoom = 1;
@@ -46,13 +41,14 @@ export function initRemoveBgModule() {
   let panStartOffset = { x: 0, y: 0 };
   let strokeSnapshotBeforeTap = null;
 
-  // Koordinat & status indikator lingkaran kuas
+  // Koordinat indikator lingkaran kuas
   let pointerPos = null;
   let lastPos = null;
   let sizePreviewTimer = null;
 
-  const undoStack = [];
-  const redoStack = [];
+  function getActiveSession() {
+    return sessions.find((s) => s.id === activeSessionId) || null;
+  }
 
   // Siapkan viewport kanvas agar zoom tidak meluber keluar kotak
   const viewport = canvas.parentElement;
@@ -63,6 +59,16 @@ export function initRemoveBgModule() {
   }
   canvas.style.touchAction = "none";
   canvas.style.transformOrigin = "0 0";
+
+  // Buat strip thumbnail + tombol (+) di atas editorWrap
+  let stripContainer = document.getElementById("bgMultiStrip");
+  if (!stripContainer && editorWrap) {
+    stripContainer = document.createElement("div");
+    stripContainer.id = "bgMultiStrip";
+    stripContainer.style.cssText =
+      "display:flex;align-items:center;gap:10px;overflow-x:auto;padding:4px 2px 12px 2px;margin-bottom:6px;scrollbar-width:none;";
+    editorWrap.insertBefore(stripContainer, editorWrap.firstChild);
+  }
 
   // Tambahkan tombol kontrol Zoom (- | 1.0x | +) di bar atas
   let zoomLabelEl = null;
@@ -90,132 +96,265 @@ export function initRemoveBgModule() {
     btnZoomIn.textContent = "+";
     btnZoomIn.style.padding = "4px 9px";
 
-    btnZoomOut.addEventListener("click", () => setZoom(zoomLevel - 0.5));
-    btnZoomIn.addEventListener("click", () => setZoom(zoomLevel + 0.5));
+    btnZoomOut.addEventListener("click", () => {
+      const s = getActiveSession();
+      if (s) setZoom(s.zoomLevel - 0.5);
+    });
+    btnZoomIn.addEventListener("click", () => {
+      const s = getActiveSession();
+      if (s) setZoom(s.zoomLevel + 0.5);
+    });
     zoomLabelEl.addEventListener("click", resetZoomAndPan);
 
     zoomGroup.append(btnZoomOut, zoomLabelEl, btnZoomIn);
     topTools.appendChild(zoomGroup);
   }
 
-  function clampPan() {
-    if (!viewport) return;
+  function generateSessionThumb(session) {
+    const tCanvas = document.createElement("canvas");
+    tCanvas.width = 96;
+    tCanvas.height = 96;
+    const tCtx = tCanvas.getContext("2d");
+
+    const scale = Math.min(96 / session.width, 96 / session.height);
+    const dw = Math.round(session.width * scale);
+    const dh = Math.round(session.height * scale);
+    const dx = Math.round((96 - dw) / 2);
+    const dy = Math.round((96 - dh) / 2);
+
+    const tmpCut = document.createElement("canvas");
+    tmpCut.width = session.width;
+    tmpCut.height = session.height;
+    const tmpCtx = tmpCut.getContext("2d");
+    tmpCtx.drawImage(session.originalCanvas, 0, 0);
+    tmpCtx.globalCompositeOperation = "destination-in";
+    tmpCtx.drawImage(session.maskCanvas, 0, 0);
+
+    tCtx.drawImage(tmpCut, dx, dy, dw, dh);
+    session.thumbUrl = tCanvas.toDataURL("image/png");
+  }
+
+  function renderThumbnailStrip() {
+    if (!stripContainer) return;
+    stripContainer.innerHTML = "";
+
+    // Tombol (+) Tambah Foto
+    const btnAdd = document.createElement("button");
+    btnAdd.type = "button";
+    btnAdd.title = "Tambah Foto Baru";
+    btnAdd.style.cssText =
+      "width:52px;height:52px;border-radius:14px;border:1.5px dashed rgba(255,255,255,0.28);background:rgba(255,255,255,0.05);color:inherit;font-size:1.45rem;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;cursor:pointer;";
+    btnAdd.textContent = "+";
+    btnAdd.addEventListener("click", () => {
+      fileInput.value = "";
+      fileInput.click();
+    });
+    stripContainer.appendChild(btnAdd);
+
+    // Daftar Thumbnail Foto
+    sessions.forEach((sess) => {
+      const isActive = sess.id === activeSessionId;
+      const itemWrap = document.createElement("div");
+      itemWrap.style.cssText = `position:relative;width:52px;height:52px;border-radius:14px;flex-shrink:0;cursor:pointer;overflow:hidden;border:2.5px solid ${
+        isActive ? "#10b981" : "rgba(255,255,255,0.14)"
+      };background-image:linear-gradient(45deg,#2a2a2e 25%,transparent 25%),linear-gradient(-45deg,#2a2a2e 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#2a2a2e 75%),linear-gradient(-45deg,transparent 75%,#2a2a2e 75%);background-size:12px 12px;background-position:0 0,0 6px,6px -6px,-6px 0;background-color:#1c1c20;`;
+
+      const img = document.createElement("img");
+      img.src = sess.thumbUrl;
+      img.alt = sess.name;
+      img.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
+      itemWrap.appendChild(img);
+
+      itemWrap.addEventListener("click", () => {
+        if (activeSessionId !== sess.id) {
+          switchToSession(sess.id);
+        }
+      });
+
+      // Tombol hapus (×) pada thumbnail yang sedang aktif
+      if (isActive) {
+        const btnDel = document.createElement("button");
+        btnDel.type = "button";
+        btnDel.title = "Hapus foto ini";
+        btnDel.textContent = "×";
+        btnDel.style.cssText =
+          "position:absolute;top:2px;right:2px;width:18px;height:18px;border-radius:50%;border:none;background:rgba(239,68,68,0.92);color:#fff;font-size:12px;font-weight:800;line-height:1;display:flex;align-items:center;justify-content:center;cursor:pointer;";
+        btnDel.addEventListener("click", (e) => {
+          e.stopPropagation();
+          removeSession(sess.id);
+        });
+        itemWrap.appendChild(btnDel);
+      }
+
+      stripContainer.appendChild(itemWrap);
+    });
+  }
+
+  function switchToSession(id) {
+    const sess = sessions.find((s) => s.id === id);
+    if (!sess) return;
+    activeSessionId = id;
+
+    canvas.width = cutoutCanvas.width = sess.width;
+    canvas.height = cutoutCanvas.height = sess.height;
+
+    const blurInput = document.getElementById("bgBlurRange");
+    const shadowInput = document.getElementById("bgShadowRange");
+    const textInput = document.getElementById("bgTextInput");
+    if (blurInput) blurInput.value = String(sess.blurAmount);
+    if (shadowInput) shadowInput.value = String(sess.shadowAmount);
+    if (textInput) textInput.value = sess.stickerText;
+
+    applyTransform();
+    renderThumbnailStrip();
+    renderComposite(false);
+  }
+
+  function removeSession(id) {
+    const idx = sessions.findIndex((s) => s.id === id);
+    if (idx === -1) return;
+    sessions.splice(idx, 1);
+
+    if (sessions.length === 0) {
+      activeSessionId = null;
+      editorWrap.classList.add("hidden");
+      topTools.classList.add("hidden");
+      dropZone.classList.remove("hidden");
+      return;
+    }
+
+    const nextIdx = Math.min(idx, sessions.length - 1);
+    switchToSession(sessions[nextIdx].id);
+  }
+
+  function clampPan(sess) {
+    if (!viewport || !sess) return;
     const vw = viewport.clientWidth || canvas.offsetWidth;
     const vh = viewport.clientHeight || canvas.offsetHeight;
-    const scaledW = canvas.offsetWidth * zoomLevel;
-    const scaledH = canvas.offsetHeight * zoomLevel;
+    const scaledW = canvas.offsetWidth * sess.zoomLevel;
+    const scaledH = canvas.offsetHeight * sess.zoomLevel;
 
-    if (zoomLevel <= 1) {
-      panX = 0;
-      panY = 0;
+    if (sess.zoomLevel <= 1) {
+      sess.panX = 0;
+      sess.panY = 0;
       return;
     }
     const minX = Math.min(0, vw - scaledW);
     const minY = Math.min(0, vh - scaledH);
-    panX = Math.max(minX, Math.min(0, panX));
-    panY = Math.max(minY, Math.min(0, panY));
+    sess.panX = Math.max(minX, Math.min(0, sess.panX));
+    sess.panY = Math.max(minY, Math.min(0, sess.panY));
   }
 
   function applyTransform() {
-    clampPan();
-    canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+    const sess = getActiveSession();
+    if (!sess) return;
+    clampPan(sess);
+    canvas.style.transform = `translate(${sess.panX}px, ${sess.panY}px) scale(${sess.zoomLevel})`;
     if (zoomLabelEl) {
-      zoomLabelEl.textContent = `${zoomLevel.toFixed(1)}x`;
+      zoomLabelEl.textContent = `${sess.zoomLevel.toFixed(1)}x`;
     }
   }
 
   function setZoom(nextZoom, centerClientX = null, centerClientY = null) {
-    const prevZoom = zoomLevel;
-    zoomLevel = Math.max(1, Math.min(5, Number(nextZoom.toFixed(2))));
+    const sess = getActiveSession();
+    if (!sess) return;
+    const prevZoom = sess.zoomLevel;
+    sess.zoomLevel = Math.max(1, Math.min(5, Number(nextZoom.toFixed(2))));
 
-    if (zoomLevel === 1) {
-      panX = 0;
-      panY = 0;
+    if (sess.zoomLevel === 1) {
+      sess.panX = 0;
+      sess.panY = 0;
     } else if (viewport && centerClientX !== null && centerClientY !== null) {
       const vRect = viewport.getBoundingClientRect();
       const cx = centerClientX - vRect.left;
       const cy = centerClientY - vRect.top;
-      const ratio = zoomLevel / prevZoom;
-      panX = cx - (cx - panX) * ratio;
-      panY = cy - (cy - panY) * ratio;
+      const ratio = sess.zoomLevel / prevZoom;
+      sess.panX = cx - (cx - sess.panX) * ratio;
+      sess.panY = cy - (cy - sess.panY) * ratio;
     } else if (viewport) {
       const cx = (viewport.clientWidth || 0) / 2;
       const cy = (viewport.clientHeight || 0) / 2;
-      const ratio = zoomLevel / prevZoom;
-      panX = cx - (cx - panX) * ratio;
-      panY = cy - (cy - panY) * ratio;
+      const ratio = sess.zoomLevel / prevZoom;
+      sess.panX = cx - (cx - sess.panX) * ratio;
+      sess.panY = cy - (cy - sess.panY) * ratio;
     }
     applyTransform();
   }
 
   function resetZoomAndPan() {
-    zoomLevel = 1;
-    panX = 0;
-    panY = 0;
+    const sess = getActiveSession();
+    if (!sess) return;
+    sess.zoomLevel = 1;
+    sess.panX = 0;
+    sess.panY = 0;
     applyTransform();
   }
 
-  function pushMaskHistory() {
-    undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
-    if (undoStack.length > 15) undoStack.shift();
-    redoStack.length = 0;
+  function pushMaskHistory(sess) {
+    if (!sess) return;
+    sess.undoStack.push(sess.maskCtx.getImageData(0, 0, sess.width, sess.height));
+    if (sess.undoStack.length > 15) sess.undoStack.shift();
+    sess.redoStack.length = 0;
   }
 
   function renderComposite(includeCursor = true) {
-    const w = canvas.width;
-    const h = canvas.height;
+    const sess = getActiveSession();
+    if (!sess) return;
+
+    const w = sess.width;
+    const h = sess.height;
     ctx.clearRect(0, 0, w, h);
 
     if (showOriginal) {
-      ctx.drawImage(originalCanvas, 0, 0);
+      ctx.drawImage(sess.originalCanvas, 0, 0);
       return;
     }
 
     // 1. Gambar Latar Belakang
-    if (bgMode === "photo" && bgPhotoImg) {
+    if (sess.bgMode === "photo" && sess.bgPhotoImg) {
       ctx.save();
-      if (blurAmount > 0) ctx.filter = `blur(${blurAmount}px)`;
-      ctx.drawImage(bgPhotoImg, 0, 0, w, h);
+      if (sess.blurAmount > 0) ctx.filter = `blur(${sess.blurAmount}px)`;
+      ctx.drawImage(sess.bgPhotoImg, 0, 0, w, h);
       ctx.restore();
-    } else if (bgMode !== "transparent") {
-      ctx.fillStyle = bgMode;
+    } else if (sess.bgMode !== "transparent") {
+      ctx.fillStyle = sess.bgMode;
       ctx.fillRect(0, 0, w, h);
     }
 
-    // 2. Potong Objek Sesuai Alpha Masker (Halus / Anti-aliased)
+    // 2. Potong Objek Sesuai Alpha Masker
     cutoutCtx.clearRect(0, 0, w, h);
     cutoutCtx.globalCompositeOperation = "source-over";
-    cutoutCtx.drawImage(originalCanvas, 0, 0);
+    cutoutCtx.drawImage(sess.originalCanvas, 0, 0);
     cutoutCtx.globalCompositeOperation = "destination-in";
-    cutoutCtx.drawImage(maskCanvas, 0, 0);
+    cutoutCtx.drawImage(sess.maskCanvas, 0, 0);
 
     // 3. Tempel Objek + Bayangan
     ctx.save();
-    if (shadowAmount > 0) {
+    if (sess.shadowAmount > 0) {
       ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
-      ctx.shadowBlur = shadowAmount;
-      ctx.shadowOffsetY = Math.round(shadowAmount * 0.3);
+      ctx.shadowBlur = sess.shadowAmount;
+      ctx.shadowOffsetY = Math.round(sess.shadowAmount * 0.3);
     }
     ctx.drawImage(cutoutCanvas, 0, 0);
     ctx.restore();
 
     // 4. Teks Stiker Opsional
-    if (stickerText) {
+    if (sess.stickerText) {
       ctx.save();
       const fontSize = Math.max(24, Math.round(w * 0.065));
       ctx.font = `800 ${fontSize}px sans-serif`;
       ctx.textAlign = "center";
-      ctx.fillStyle = stickerColor;
+      ctx.fillStyle = sess.stickerColor;
       ctx.strokeStyle = "#000000";
       ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.12));
-      ctx.strokeText(stickerText, w / 2, h - fontSize * 0.8);
-      ctx.fillText(stickerText, w / 2, h - fontSize * 0.8);
+      ctx.strokeText(sess.stickerText, w / 2, h - fontSize * 0.8);
+      ctx.fillText(sess.stickerText, w / 2, h - fontSize * 0.8);
       ctx.restore();
     }
 
     // 5. Indikator Lingkaran Merah saat sentuhan / atur ukuran kuas
     if (includeCursor && pointerPos) {
-      const effectiveRadius = brushSize / zoomLevel;
+      const effectiveRadius = brushSize / sess.zoomLevel;
       ctx.save();
       ctx.beginPath();
       ctx.arc(pointerPos.x, pointerPos.y, effectiveRadius, 0, Math.PI * 2);
@@ -224,77 +363,133 @@ export function initRemoveBgModule() {
           ? "rgba(239, 68, 68, 0.38)"
           : "rgba(16, 185, 129, 0.35)";
       ctx.fill();
-      ctx.lineWidth = Math.max(1.5, Math.round(w * 0.0035) / zoomLevel);
+      ctx.lineWidth = Math.max(1.5, Math.round(w * 0.0035) / sess.zoomLevel);
       ctx.strokeStyle = brushMode === "erase" ? "#ef4444" : "#10b981";
       ctx.stroke();
 
       ctx.beginPath();
-      ctx.arc(pointerPos.x, pointerPos.y, 2 / zoomLevel, 0, Math.PI * 2);
+      ctx.arc(pointerPos.x, pointerPos.y, 2 / sess.zoomLevel, 0, Math.PI * 2);
       ctx.fillStyle = "#ffffff";
       ctx.fill();
       ctx.restore();
     }
   }
 
-  async function processImageFile(file) {
-    if (!guardActionAgainstAdblock()) return;
+  async function processSingleFile(file, statusCallback) {
     if (file.size > 4 * 1024 * 1024) {
-      fileInput.value = "";
-      return alert("Ukuran foto maksimal 4 MB agar proses AI cepat dan ringan.");
+      alert(`Foto "${file.name}" melebihi 4 MB dan dilewati.`);
+      return null;
     }
+
+    const img = await createImageBitmap(file);
+    const maxDim = 1280;
+    const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+    const w = Math.round(img.width * scale);
+    const h = Math.round(img.height * scale);
+
+    const origC = document.createElement("canvas");
+    origC.width = w;
+    origC.height = h;
+    origC.getContext("2d").drawImage(img, 0, 0, w, h);
+
+    const mCanvas = document.createElement("canvas");
+    mCanvas.width = w;
+    mCanvas.height = h;
+    const mCtx = mCanvas.getContext("2d");
+
+    const removeBackground = await getGeneralBgRemover();
+    const resultBlob = await removeBackground(file, {
+      model: "isnet_quint8",
+      output: { format: "image/png", quality: 1 },
+      progress: (_key, current, total) => {
+        if (total > 0 && statusCallback) {
+          const pct = Math.min(99, Math.round((current / total) * 100));
+          statusCallback(pct);
+        }
+      },
+    });
+
+    const cutoutBitmap = await createImageBitmap(resultBlob);
+    mCtx.clearRect(0, 0, w, h);
+    mCtx.drawImage(cutoutBitmap, 0, 0, w, h);
+
+    const session = {
+      id: `bg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      name: file.name,
+      width: w,
+      height: h,
+      originalCanvas: origC,
+      maskCanvas: mCanvas,
+      maskCtx: mCtx,
+      undoStack: [],
+      redoStack: [],
+      bgMode: "transparent",
+      bgPhotoImg: null,
+      blurAmount: 0,
+      shadowAmount: 0,
+      stickerText: "",
+      stickerColor: "#ffffff",
+      zoomLevel: 1,
+      panX: 0,
+      panY: 0,
+      thumbUrl: "",
+    };
+
+    pushMaskHistory(session);
+    generateSessionThumb(session);
+    sessions.push(session);
+    saveLocalHistory("removebg", file.name, "Studio Cutout HD");
+    return session;
+  }
+
+  async function handleFilesUpload(fileList) {
+    if (!guardActionAgainstAdblock()) return;
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
 
     const titleEl = dropZone.querySelector(".drop-title");
     const oldTitle = titleEl.textContent;
-    titleEl.textContent = "Memproses AI Presisi Tinggi...";
+
+    // Ubah indikator pada tombol (+) jika editor sudah terbuka
+    const addBtn = stripContainer?.querySelector("button");
+    if (addBtn) {
+      addBtn.disabled = true;
+      addBtn.textContent = "…";
+    }
 
     try {
-      const img = await createImageBitmap(file);
-      const maxDim = 1280;
-      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
-      const w = Math.round(img.width * scale);
-      const h = Math.round(img.height * scale);
+      let lastCreated = null;
+      for (let i = 0; i < files.length; i++) {
+        const labelPrefix = files.length > 1 ? `Foto ${i + 1}/${files.length}` : "AI Presisi";
+        titleEl.textContent = `Memproses ${labelPrefix}...`;
 
-      canvas.width = originalCanvas.width = maskCanvas.width = cutoutCanvas.width = w;
-      canvas.height = originalCanvas.height = maskCanvas.height = cutoutCanvas.height = h;
+        const created = await processSingleFile(files[i], (pct) => {
+          titleEl.textContent = `Memproses ${labelPrefix} (${pct}%)...`;
+        });
+        if (created) lastCreated = created;
+      }
 
-      originalCanvas.getContext("2d").drawImage(img, 0, 0, w, h);
-
-      // Jalankan model IS-Net general purpose (halus untuk logo, mobil, produk, & orang)
-      const removeBackground = await getGeneralBgRemover();
-      const resultBlob = await removeBackground(file, {
-        model: "isnet_quint8",
-        output: { format: "image/png", quality: 1 },
-        progress: (_key, current, total) => {
-          if (total > 0) {
-            const pct = Math.min(99, Math.round((current / total) * 100));
-            titleEl.textContent = `Memproses AI Presisi (${pct}%)...`;
-          }
-        },
-      });
-
-      const cutoutBitmap = await createImageBitmap(resultBlob);
-      maskCtx.clearRect(0, 0, w, h);
-      maskCtx.drawImage(cutoutBitmap, 0, 0, w, h);
-
-      undoStack.length = 0;
-      redoStack.length = 0;
-      pushMaskHistory();
-      resetZoomAndPan();
-
-      dropZone.classList.add("hidden");
-      editorWrap.classList.remove("hidden");
-      topTools.classList.remove("hidden");
-      renderComposite(false);
-      saveLocalHistory("removebg", file.name, "Studio Cutout HD");
+      if (lastCreated) {
+        dropZone.classList.add("hidden");
+        editorWrap.classList.remove("hidden");
+        topTools.classList.remove("hidden");
+        switchToSession(lastCreated.id);
+      }
     } catch (err) {
       alert("Gagal memproses gambar: " + err.message);
     } finally {
       titleEl.textContent = oldTitle;
+      if (addBtn) {
+        addBtn.disabled = false;
+        addBtn.textContent = "+";
+      }
     }
   }
 
   fileInput.addEventListener("change", (e) => {
-    if (e.target.files?.[0]) processImageFile(e.target.files[0]);
+    if (e.target.files?.length) {
+      handleFilesUpload(e.target.files);
+    }
   });
 
   // Tab Dock Editor
@@ -310,21 +505,26 @@ export function initRemoveBgModule() {
   // Warna & Foto Latar
   document.querySelectorAll(".swatch").forEach((sw) => {
     sw.addEventListener("click", () => {
-      bgMode = sw.dataset.bg;
+      const sess = getActiveSession();
+      if (!sess) return;
+      sess.bgMode = sw.dataset.bg;
       renderComposite(false);
     });
   });
 
   document.getElementById("bgColorPicker")?.addEventListener("input", (e) => {
-    bgMode = e.target.value;
+    const sess = getActiveSession();
+    if (!sess) return;
+    sess.bgMode = e.target.value;
     renderComposite(false);
   });
 
   document.getElementById("bgCustomPhoto")?.addEventListener("change", async (e) => {
+    const sess = getActiveSession();
     const f = e.target.files?.[0];
-    if (!f) return;
-    bgPhotoImg = await createImageBitmap(f);
-    bgMode = "photo";
+    if (!sess || !f) return;
+    sess.bgPhotoImg = await createImageBitmap(f);
+    sess.bgMode = "photo";
     renderComposite(false);
   });
 
@@ -374,24 +574,28 @@ export function initRemoveBgModule() {
   }
 
   function paintMaskStroke(fromPos, toPos) {
-    const effectiveRadius = brushSize / zoomLevel;
-    maskCtx.save();
-    maskCtx.globalCompositeOperation = brushMode === "erase" ? "destination-out" : "source-over";
-    maskCtx.strokeStyle = "rgba(255,255,255,1)";
-    maskCtx.fillStyle = "rgba(255,255,255,1)";
-    maskCtx.lineWidth = effectiveRadius * 2;
-    maskCtx.lineCap = "round";
-    maskCtx.lineJoin = "round";
+    const sess = getActiveSession();
+    if (!sess) return;
+    const effectiveRadius = brushSize / sess.zoomLevel;
+    const mCtx = sess.maskCtx;
 
-    maskCtx.beginPath();
-    maskCtx.moveTo(fromPos.x, fromPos.y);
-    maskCtx.lineTo(toPos.x, toPos.y);
-    maskCtx.stroke();
+    mCtx.save();
+    mCtx.globalCompositeOperation = brushMode === "erase" ? "destination-out" : "source-over";
+    mCtx.strokeStyle = "rgba(255,255,255,1)";
+    mCtx.fillStyle = "rgba(255,255,255,1)";
+    mCtx.lineWidth = effectiveRadius * 2;
+    mCtx.lineCap = "round";
+    mCtx.lineJoin = "round";
 
-    maskCtx.beginPath();
-    maskCtx.arc(toPos.x, toPos.y, effectiveRadius, 0, Math.PI * 2);
-    maskCtx.fill();
-    maskCtx.restore();
+    mCtx.beginPath();
+    mCtx.moveTo(fromPos.x, fromPos.y);
+    mCtx.lineTo(toPos.x, toPos.y);
+    mCtx.stroke();
+
+    mCtx.beginPath();
+    mCtx.arc(toPos.x, toPos.y, effectiveRadius, 0, Math.PI * 2);
+    mCtx.fill();
+    mCtx.restore();
 
     renderComposite(true);
   }
@@ -409,23 +613,24 @@ export function initRemoveBgModule() {
 
   // Gesture 1 jari = Kuas Merah | 2 jari = Cubit Zoom & Geser
   canvas.addEventListener("pointerdown", (e) => {
+    const sess = getActiveSession();
+    if (!sess) return;
     e.preventDefault();
     canvas.setPointerCapture?.(e.pointerId);
     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
     if (activePointers.size === 1) {
       isDrawing = true;
-      strokeSnapshotBeforeTap = maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height);
-      pushMaskHistory();
+      strokeSnapshotBeforeTap = sess.maskCtx.getImageData(0, 0, sess.width, sess.height);
+      pushMaskHistory(sess);
       const pos = getCanvasCoords(e.clientX, e.clientY);
       pointerPos = pos;
       lastPos = pos;
       paintMaskStroke(pos, pos);
     } else if (activePointers.size === 2) {
-      // Batalkan titik kuas jika jari kedua menyentuh layar untuk pinch-zoom
       if (isDrawing && strokeSnapshotBeforeTap) {
-        maskCtx.putImageData(strokeSnapshotBeforeTap, 0, 0);
-        undoStack.pop();
+        sess.maskCtx.putImageData(strokeSnapshotBeforeTap, 0, 0);
+        sess.undoStack.pop();
         strokeSnapshotBeforeTap = null;
       }
       isDrawing = false;
@@ -435,14 +640,15 @@ export function initRemoveBgModule() {
 
       const { dist, midX, midY } = getPinchMetrics();
       pinchStartDist = dist || 1;
-      pinchStartZoom = zoomLevel;
+      pinchStartZoom = sess.zoomLevel;
       panStartMid = { x: midX, y: midY };
-      panStartOffset = { x: panX, y: panY };
+      panStartOffset = { x: sess.panX, y: sess.panY };
     }
   });
 
   canvas.addEventListener("pointermove", (e) => {
-    if (!activePointers.has(e.pointerId)) return;
+    const sess = getActiveSession();
+    if (!sess || !activePointers.has(e.pointerId)) return;
     e.preventDefault();
     activePointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
 
@@ -457,9 +663,9 @@ export function initRemoveBgModule() {
         const anchorY = panStartMid.y - vRect.top;
         const ratio = targetZoom / pinchStartZoom;
 
-        zoomLevel = Number(targetZoom.toFixed(2));
-        panX = anchorX - (anchorX - panStartOffset.x) * ratio + (midX - panStartMid.x);
-        panY = anchorY - (anchorY - panStartOffset.y) * ratio + (midY - panStartMid.y);
+        sess.zoomLevel = Number(targetZoom.toFixed(2));
+        sess.panX = anchorX - (anchorX - panStartOffset.x) * ratio + (midX - panStartMid.x);
+        sess.panY = anchorY - (anchorY - panStartOffset.y) * ratio + (midY - panStartMid.y);
         applyTransform();
       }
       return;
@@ -479,6 +685,13 @@ export function initRemoveBgModule() {
       panStartMid = null;
     }
     if (activePointers.size === 0) {
+      if (isDrawing) {
+        const sess = getActiveSession();
+        if (sess) {
+          generateSessionThumb(sess);
+          renderThumbnailStrip();
+        }
+      }
       isDrawing = false;
       lastPos = null;
       pointerPos = null;
@@ -492,31 +705,43 @@ export function initRemoveBgModule() {
 
   // Efek Blur, Bayangan & Teks
   document.getElementById("bgBlurRange")?.addEventListener("input", (e) => {
-    blurAmount = Number(e.target.value);
+    const sess = getActiveSession();
+    if (!sess) return;
+    sess.blurAmount = Number(e.target.value);
     renderComposite(false);
   });
   document.getElementById("bgShadowRange")?.addEventListener("input", (e) => {
-    shadowAmount = Number(e.target.value);
+    const sess = getActiveSession();
+    if (!sess) return;
+    sess.shadowAmount = Number(e.target.value);
     renderComposite(false);
   });
   document.getElementById("btnBgAddText")?.addEventListener("click", () => {
-    stickerText = document.getElementById("bgTextInput").value.trim();
-    stickerColor = document.getElementById("bgTextColor").value;
+    const sess = getActiveSession();
+    if (!sess) return;
+    sess.stickerText = document.getElementById("bgTextInput").value.trim();
+    sess.stickerColor = document.getElementById("bgTextColor").value;
     renderComposite(false);
   });
 
   // Undo, Redo, Bandingkan, Unduh PNG
   document.getElementById("btnBgUndo")?.addEventListener("click", () => {
-    if (undoStack.length <= 1) return;
-    redoStack.push(undoStack.pop());
-    maskCtx.putImageData(undoStack[undoStack.length - 1], 0, 0);
+    const sess = getActiveSession();
+    if (!sess || sess.undoStack.length <= 1) return;
+    sess.redoStack.push(sess.undoStack.pop());
+    sess.maskCtx.putImageData(sess.undoStack[sess.undoStack.length - 1], 0, 0);
+    generateSessionThumb(sess);
+    renderThumbnailStrip();
     renderComposite(false);
   });
   document.getElementById("btnBgRedo")?.addEventListener("click", () => {
-    if (!redoStack.length) return;
-    const next = redoStack.pop();
-    undoStack.push(next);
-    maskCtx.putImageData(next, 0, 0);
+    const sess = getActiveSession();
+    if (!sess || !sess.redoStack.length) return;
+    const next = sess.redoStack.pop();
+    sess.undoStack.push(next);
+    sess.maskCtx.putImageData(next, 0, 0);
+    generateSessionThumb(sess);
+    renderThumbnailStrip();
     renderComposite(false);
   });
   const btnCompare = document.getElementById("btnBgCompare");
@@ -530,6 +755,8 @@ export function initRemoveBgModule() {
   });
 
   document.getElementById("btnBgDownload")?.addEventListener("click", () => {
+    const sess = getActiveSession();
+    if (!sess) return;
     renderComposite(false);
     const a = document.createElement("a");
     a.href = canvas.toDataURL("image/png");
