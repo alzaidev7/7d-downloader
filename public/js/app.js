@@ -96,23 +96,30 @@ initBratModule();
 
 export { guardActionAgainstAdblock };
 
+
 // tab-upscaler-fallback
 document.addEventListener("click", (e) => {
-  const btn = e.target.closest("[data-tab=\"tab-upscaler\"], [data-target=\"tab-upscaler\"]");
-  if (!btn) return;
-  document.querySelectorAll("header button, nav button, [data-tab], [data-target]").forEach((b) => {
-    if (b.dataset.tab || b.dataset.target) b.classList.remove("active");
+  const clickedBtn = e.target.closest("[data-tab], [data-target]");
+  if (!clickedBtn) return;
+  const targetId = clickedBtn.dataset.tab || clickedBtn.dataset.target;
+  if (!targetId) return;
+
+  const allTabs = ["tab-downloader", "tab-removebg", "tab-upscaler", "tab-qr"];
+  if (!allTabs.includes(targetId)) return;
+
+  document.querySelectorAll("[data-tab], [data-target]").forEach((b) => {
+    const t = b.dataset.tab || b.dataset.target;
+    if (allTabs.includes(t)) {
+      b.classList.toggle("active", t === targetId);
+    }
   });
-  btn.classList.add("active");
-  document.querySelectorAll("main > section, .tab-content, .tab-panel").forEach((sec) => {
-    sec.classList.add("hidden");
-    sec.classList.remove("active");
-    sec.style.display = "none";
+
+  allTabs.forEach((id) => {
+    const panel = document.getElementById(id);
+    if (!panel) return;
+    const isTarget = id === targetId;
+    panel.classList.toggle("hidden", !isTarget);
+    panel.classList.toggle("active", isTarget);
+    panel.style.display = isTarget ? "" : "none";
   });
-  const targetSec = document.getElementById("tab-upscaler");
-  if (targetSec) {
-    targetSec.classList.remove("hidden");
-    targetSec.classList.add("active");
-    targetSec.style.display = "block";
-  }
 });
