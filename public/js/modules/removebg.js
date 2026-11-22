@@ -1,12 +1,31 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
-let bgRemoverFn = null;
+let modnetPromise = null;
 
-async function getGeneralBgRemover() {
-  if (bgRemoverFn) return bgRemoverFn;
-  const mod = await import("https://esm.sh/@imgly/background-removal@1.5.5");
-  bgRemoverFn = mod.removeBackground;
-  return bgRemoverFn;
+async function getModnetPipeline(onProgress) {
+  if (!modnetPromise) {
+    modnetPromise = (async () => {
+      const { AutoModel, AutoProcessor, RawImage, env } = await import(
+        "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.1.2"
+      );
+      env.allowLocalModels = false;
+
+      const model = await AutoModel.from_pretrained("Xenova/modnet", {
+        dtype: "q8",
+        progress_callback: (info) => {
+          if (info?.status === "progress" && typeof info.progress === "number" && onProgress) {
+            onProgress(Math.min(95, Math.round(info.progress)));
+          }
+        },
+      });
+      const processor = await AutoProcessor.from_pretrained("Xenova/modnet");
+      return { model, processor, RawImage };
+    })().catch((err) => {
+      modnetPromise = null;
+      throw err;
+    });
+  }
+  return modnetPromise;
 }
 
 export function initRemoveBgModule() {
@@ -17,14 +36,12 @@ export function initRemoveBgModule() {
   const canvas = document.getElementById("bgCanvasOutput");
   if (!canvas || !fileInput) return;
 
-  // Izinkan pilih banyak foto sekaligus dari galeri
   fileInput.multiple = true;
   const ctx = canvas.getContext("2d");
 
   const cutoutCanvas = document.createElement("canvas");
   const cutoutCtx = cutoutCanvas.getContext("2d");
 
-  // Daftar sesi multi-foto (seperti tab thumbnail di remove.bg)
   const sessions = [];
   let activeSessionId = null;
 
@@ -50,7 +67,6 @@ export function initRemoveBgModule() {
     return sessions.find((s) => s.id === activeSessionId) || null;
   }
 
-  // Siapkan viewport kanvas agar zoom tidak meluber keluar kotak
   const viewport = canvas.parentElement;
   if (viewport) {
     viewport.style.overflow = "hidden";
@@ -60,7 +76,7 @@ export function initRemoveBgModule() {
   canvas.style.touchAction = "none";
   canvas.style.transformOrigin = "0 0";
 
-  // Buat strip thumbnail + tombol (+) di atas editorWrap
+  // Strip thumbnail + tombol (+) di atas editorWrap
   let stripContainer = document.getElementById("bgMultiStrip");
   if (!stripContainer && editorWrap) {
     stripContainer = document.createElement("div");
@@ -70,7 +86,7 @@ export function initRemoveBgModule() {
     editorWrap.insertBefore(stripContainer, editorWrap.firstChild);
   }
 
-  // Tambahkan tombol kontrol Zoom (- | 1.0x | +) di bar atas
+  // Tombol kontrol Zoom (- | 1.0x | +)
   let zoomLabelEl = null;
   if (topTools && !document.getElementById("bgZoomControls")) {
     const zoomGroup = document.createElement("div");
@@ -138,7 +154,6 @@ export function initRemoveBgModule() {
     if (!stripContainer) return;
     stripContainer.innerHTML = "";
 
-    // Tombol (+) Tambah Foto
     const btnAdd = document.createElement("button");
     btnAdd.type = "button";
     btnAdd.title = "Tambah Foto Baru";
@@ -151,7 +166,6 @@ export function initRemoveBgModule() {
     });
     stripContainer.appendChild(btnAdd);
 
-    // Daftar Thumbnail Foto
     sessions.forEach((sess) => {
       const isActive = sess.id === activeSessionId;
       const itemWrap = document.createElement("div");
@@ -171,7 +185,6 @@ export function initRemoveBgModule() {
         }
       });
 
-      // Tombol hapus (×) pada thumbnail yang sedang aktif
       if (isActive) {
         const btnDel = document.createElement("button");
         btnDel.type = "button";
@@ -310,7 +323,6 @@ export function initRemoveBgModule() {
       return;
     }
 
-    // 1. Gambar Latar Belakang
     if (sess.bgMode === "photo" && sess.bgPhotoImg) {
       ctx.save();
       if (sess.blurAmount > 0) ctx.filter = `blur(${sess.blurAmount}px)`;
@@ -321,14 +333,12 @@ export function initRemoveBgModule() {
       ctx.fillRect(0, 0, w, h);
     }
 
-    // 2. Potong Objek Sesuai Alpha Masker
     cutoutCtx.clearRect(0, 0, w, h);
     cutoutCtx.globalCompositeOperation = "source-over";
     cutoutCtx.drawImage(sess.originalCanvas, 0, 0);
     cutoutCtx.globalCompositeOperation = "destination-in";
     cutoutCtx.drawImage(sess.maskCanvas, 0, 0);
 
-    // 3. Tempel Objek + Bayangan
     ctx.save();
     if (sess.shadowAmount > 0) {
       ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
@@ -338,7 +348,6 @@ export function initRemoveBgModule() {
     ctx.drawImage(cutoutCanvas, 0, 0);
     ctx.restore();
 
-    // 4. Teks Stiker Opsional
     if (sess.stickerText) {
       ctx.save();
       const fontSize = Math.max(24, Math.round(w * 0.065));
@@ -352,7 +361,6 @@ export function initRemoveBgModule() {
       ctx.restore();
     }
 
-    // 5. Indikator Lingkaran Merah saat sentuhan / atur ukuran kuas
     if (includeCursor && pointerPos) {
       const effectiveRadius = brushSize / sess.zoomLevel;
       ctx.save();
@@ -397,21 +405,29 @@ export function initRemoveBgModule() {
     mCanvas.height = h;
     const mCtx = mCanvas.getContext("2d");
 
-    const removeBackground = await getGeneralBgRemover();
-    const resultBlob = await removeBackground(file, {
-      model: "isnet_quint8",
-      output: { format: "image/png", quality: 1 },
-      progress: (_key, current, total) => {
-        if (total > 0 && statusCallback) {
-          const pct = Math.min(99, Math.round((current / total) * 100));
-          statusCallback(pct);
-        }
-      },
-    });
+    const { model, processor, RawImage } = await getModnetPipeline(statusCallback);
+    if (statusCallback) statusCallback(98);
 
-    const cutoutBitmap = await createImageBitmap(resultBlob);
-    mCtx.clearRect(0, 0, w, h);
-    mCtx.drawImage(cutoutBitmap, 0, 0, w, h);
+    const rawImg = RawImage.fromCanvas(origC);
+    const { pixel_values } = await processor(rawImg);
+    const { output } = await model({ input: pixel_values });
+
+    const alphaTensor = output[0].mul(255).to("uint8");
+    const resizedMask = await RawImage.fromTensor(alphaTensor).resize(w, h);
+    const maskData = resizedMask.data;
+    const step = resizedMask.channels || 1;
+
+    const imgData = mCtx.createImageData(w, h);
+    const totalPixels = w * h;
+    for (let i = 0; i < totalPixels; i++) {
+      const alpha = maskData[i * step];
+      const idx = i * 4;
+      imgData.data[idx] = 255;
+      imgData.data[idx + 1] = 255;
+      imgData.data[idx + 2] = 255;
+      imgData.data[idx + 3] = alpha;
+    }
+    mCtx.putImageData(imgData, 0, 0);
 
     const session = {
       id: `bg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -450,7 +466,6 @@ export function initRemoveBgModule() {
     const titleEl = dropZone.querySelector(".drop-title");
     const oldTitle = titleEl.textContent;
 
-    // Ubah indikator pada tombol (+) jika editor sudah terbuka
     const addBtn = stripContainer?.querySelector("button");
     if (addBtn) {
       addBtn.disabled = true;
@@ -492,7 +507,6 @@ export function initRemoveBgModule() {
     }
   });
 
-  // Tab Dock Editor
   document.querySelectorAll(".dock-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".dock-btn").forEach((b) => b.classList.remove("active"));
@@ -502,7 +516,6 @@ export function initRemoveBgModule() {
     });
   });
 
-  // Warna & Foto Latar
   document.querySelectorAll(".swatch").forEach((sw) => {
     sw.addEventListener("click", () => {
       const sess = getActiveSession();
@@ -528,7 +541,6 @@ export function initRemoveBgModule() {
     renderComposite(false);
   });
 
-  // Kuas Hapus / Pulihkan
   const btnErase = document.getElementById("btnBrushErase");
   const btnRestore = document.getElementById("btnBrushRestore");
   btnErase?.addEventListener("click", () => {
@@ -542,7 +554,6 @@ export function initRemoveBgModule() {
     btnErase.classList.remove("active");
   });
 
-  // Pratinjau lingkaran merah saat slider ukuran kuas digeser
   document.getElementById("brushSizeRange")?.addEventListener("input", (e) => {
     brushSize = Number(e.target.value);
     if (canvas.width > 0) {
@@ -611,7 +622,6 @@ export function initRemoveBgModule() {
     };
   }
 
-  // Gesture 1 jari = Kuas Merah | 2 jari = Cubit Zoom & Geser
   canvas.addEventListener("pointerdown", (e) => {
     const sess = getActiveSession();
     if (!sess) return;
@@ -703,7 +713,6 @@ export function initRemoveBgModule() {
   canvas.addEventListener("pointerup", handlePointerEnd);
   canvas.addEventListener("pointercancel", handlePointerEnd);
 
-  // Efek Blur, Bayangan & Teks
   document.getElementById("bgBlurRange")?.addEventListener("input", (e) => {
     const sess = getActiveSession();
     if (!sess) return;
@@ -724,7 +733,6 @@ export function initRemoveBgModule() {
     renderComposite(false);
   });
 
-  // Undo, Redo, Bandingkan, Unduh PNG
   document.getElementById("btnBgUndo")?.addEventListener("click", () => {
     const sess = getActiveSession();
     if (!sess || sess.undoStack.length <= 1) return;
