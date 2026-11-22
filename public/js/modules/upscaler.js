@@ -1,4 +1,6 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=8";
+import * as AppHelpers from "../app.js?v=9";
+const guardActionAgainstAdblock = AppHelpers.guardActionAgainstAdblock || (() => true);
+const saveLocalHistory = AppHelpers.saveLocalHistory || (() => {});
 
 let srPipelinePromise = null;
 

@@ -1,11 +1,11 @@
-import { initUpscalerModule } from "./modules/upscaler.js?v=8";
+import { initUpscalerModule } from "./modules/upscaler.js?v=9";
 import {
   initAdSystem,
   guardActionAgainstAdblock,
   refreshAdSlotsOnTabSwitch,
 } from "./adblock.js?v=4";
 import { initDownloaderModule } from "./modules/downloader.js?v=4";
-import { initRemoveBgModule } from "./modules/removebg.js?v=8";
+import { initRemoveBgModule } from "./modules/removebg.js?v=9";
 import { initQrModule } from "./modules/qrstudio.js?v=4";
 import { initBratModule } from "./modules/brat.js?v=4";
 
@@ -97,29 +97,55 @@ initBratModule();
 export { guardActionAgainstAdblock };
 
 
+
 // tab-upscaler-fallback
-document.addEventListener("click", (e) => {
-  const clickedBtn = e.target.closest("[data-tab], [data-target]");
-  if (!clickedBtn) return;
-  const targetId = clickedBtn.dataset.tab || clickedBtn.dataset.target;
-  if (!targetId) return;
+(() => {
+  const MAP = {
+    "downloader": "tab-downloader",
+    "tab-downloader": "tab-downloader",
+    "remove bg": "tab-removebg",
+    "removebg": "tab-removebg",
+    "tab-removebg": "tab-removebg",
+    "hd image": "tab-upscaler",
+    "ai upscale": "tab-upscaler",
+    "upscaler": "tab-upscaler",
+    "tab-upscaler": "tab-upscaler",
+    "qr studio": "tab-qr",
+    "qr": "tab-qr",
+    "tab-qr": "tab-qr"
+  };
 
-  const allTabs = ["tab-downloader", "tab-removebg", "tab-upscaler", "tab-qr"];
-  if (!allTabs.includes(targetId)) return;
+  function switchTab(targetId, activeBtn) {
+    const panels = ["tab-downloader", "tab-removebg", "tab-upscaler", "tab-qr"];
+    if (!panels.includes(targetId)) return;
 
-  document.querySelectorAll("[data-tab], [data-target]").forEach((b) => {
-    const t = b.dataset.tab || b.dataset.target;
-    if (allTabs.includes(t)) {
-      b.classList.toggle("active", t === targetId);
+    // Update status active pada semua tombol navigasi
+    document.querySelectorAll("header button, nav button, [data-tab], [data-target], [data-panel]").forEach((b) => {
+      const label = (b.dataset.tab || b.dataset.target || b.dataset.panel || b.textContent || "").trim().toLowerCase();
+      if (MAP[label]) {
+        b.classList.toggle("active", b === activeBtn || MAP[label] === targetId);
+      }
+    });
+
+    // Tampilkan panel yang dipilih & sembunyikan sisanya
+    panels.forEach((id) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const show = id === targetId;
+      el.classList.toggle("hidden", !show);
+      el.classList.toggle("active", show);
+      el.style.display = show ? "" : "none";
+    });
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const key = (btn.dataset.tab || btn.dataset.target || btn.dataset.panel || btn.textContent || "").trim().toLowerCase();
+    const targetId = MAP[key];
+    if (targetId) {
+      e.preventDefault();
+      switchTab(targetId, btn);
     }
-  });
-
-  allTabs.forEach((id) => {
-    const panel = document.getElementById(id);
-    if (!panel) return;
-    const isTarget = id === targetId;
-    panel.classList.toggle("hidden", !isTarget);
-    panel.classList.toggle("active", isTarget);
-    panel.style.display = isTarget ? "" : "none";
-  });
-});
+  }, true);
+})();
