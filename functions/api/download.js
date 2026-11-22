@@ -316,7 +316,7 @@ async function fetchFacebookDirect(fullUrl) {
     ? titleMatch[1].replace(/\s*\|\s*Facebook.*$/i, "").trim()
     : "Facebook Video";
 
-  return { title, links };
+  const ogImg = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i); const cover = ogImg ? decodeHtmlEntities(ogImg[1]) : ""; return { title, cover, links };
 }
 
 export async function onRequestPost(context) {

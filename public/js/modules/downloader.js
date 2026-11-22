@@ -63,7 +63,6 @@ async function fetchTikTokClientSide(cleanUrl) {
       ok: true,
       title: d.title || "TikTok Video",
       cover: d.cover || d.origin_cover || "",
-      previewVideo: d.play || "",
       duration: formatDuration(d.duration),
       author: {
         name: d.author?.nickname || d.author?.unique_id || "TikTok Creator",
@@ -142,41 +141,26 @@ export function initDownloaderModule() {
     card.style.cssText =
       "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;overflow:hidden;";
 
-    // 1. Area Preview Media (Terkunci tanpa tombol download bawaan browser)
-    const sdItem = (data.links || []).find((l) => l.type === "mp4" && l.quality !== "hd");
-    const fallbackItem = (data.links || []).find((l) => l.type === "mp4");
-    const videoSrc = data.previewVideo || sdItem?.url || fallbackItem?.url || "";
-
-    if (data.cover || videoSrc) {
+    // 1. Area Preview Gambar Statis Saja (Tidak bisa diputar / diunduh langsung)
+    if (data.cover) {
       const mediaWrap = document.createElement("div");
       mediaWrap.style.cssText =
         "position:relative;width:100%;aspect-ratio:16/10;background:#0a0a0c;overflow:hidden;user-select:none;";
 
-      if (videoSrc) {
-        const videoEl = document.createElement("video");
-        videoEl.src = videoSrc;
-        if (data.cover) videoEl.poster = data.cover;
-        videoEl.controls = true;
-        videoEl.playsInline = true;
-        videoEl.preload = "metadata";
-        videoEl.disablePictureInPicture = true;
-        videoEl.setAttribute("controlsList", "nodownload noplaybackrate noremoteplayback");
-        videoEl.addEventListener("contextmenu", (e) => e.preventDefault());
-        videoEl.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
-        mediaWrap.appendChild(videoEl);
-      } else if (data.cover) {
-        const imgEl = document.createElement("img");
-        imgEl.src = data.cover;
-        imgEl.alt = "Preview Video";
-        imgEl.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
-        mediaWrap.appendChild(imgEl);
-      }
+      const imgEl = document.createElement("img");
+      imgEl.src = data.cover;
+      imgEl.alt = "Thumbnail Preview";
+      imgEl.draggable = false;
+      imgEl.addEventListener("contextmenu", (e) => e.preventDefault());
+      imgEl.style.cssText =
+        "width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;";
+      mediaWrap.appendChild(imgEl);
 
       if (data.duration) {
         const badge = document.createElement("span");
         badge.textContent = data.duration;
         badge.style.cssText =
-          "position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.72);color:#fff;font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:8px;pointer-events:none;";
+          "position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.75);color:#fff;font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:8px;pointer-events:none;";
         mediaWrap.appendChild(badge);
       }
 
