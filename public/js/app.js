@@ -1,3 +1,4 @@
+import { initUpscalerModule } from "./modules/upscaler.js";
 import {
   initAdSystem,
   guardActionAgainstAdblock,
@@ -89,6 +90,7 @@ document.getElementById("btnHistoryClose")?.addEventListener("click", () => {
 initAdSystem();
 initDownloaderModule();
 initRemoveBgModule();
+  initUpscalerModule();
 initQrModule();
 initBratModule();
 

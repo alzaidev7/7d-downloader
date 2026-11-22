@@ -40,7 +40,7 @@
     <section id="tab-downloader" class="workspace-card">
       <div class="card-header">
         <h1>Media Downloader</h1>
-        <p>Unduh video MP4 & audio MP3 tanpa watermark dari YouTube, TikTok, Instagram, dan Facebook.</p>
+        <p>Unduh video MP4 & audio MP3 tanpa watermark dari TikTok, Instagram, dan Facebook.</p>
       </div>
       <div class="input-with-paste">
         <input type="url" id="dlUrlInput" placeholder="Tempel tautan video di sini (https://...)" autocomplete="off" />
@@ -49,7 +49,7 @@
       <button type="button" id="btnDownloadRun" class="btn-emerald full">Download</button>
 
       <div class="platform-badges" style="margin-top: 14px;">
-        <span class="badge">YouTube</span>
+        
         <span class="badge">TikTok</span>
         <span class="badge">Instagram</span>
         <span class="badge">Facebook</span>
@@ -320,6 +320,76 @@
         </details>
       </div>
     </section>
+  
+    <section id="tab-upscaler" class="tab-content hidden">
+      <div class="bento-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+          <h2 style="margin:0;font-size:1.25rem;">AI Photo Enhancer & Upscale</h2>
+          <span style="font-size:0.72rem;font-weight:700;padding:3px 9px;border-radius:999px;background:rgba(16,185,129,0.16);color:#10b981;">2x / 4x HD</span>
+        </div>
+        <p style="opacity:0.75;font-size:0.88rem;margin:0 0 14px 0;">
+          Perjelas foto buram, tingkatkan resolusi hingga 4x HD, dan bandingkan langsung sebelum mengunduh.
+        </p>
+
+        <label id="upUploadDrop" class="upload-dropzone" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:28px 16px;border:1.5px dashed rgba(255,255,255,0.22);border-radius:16px;cursor:pointer;text-align:center;">
+          <input id="upFileInput" type="file" accept="image/png,image/jpeg,image/webp" class="hidden" />
+          <span style="font-size:1.8rem;margin-bottom:6px;">✨</span>
+          <strong class="drop-title" style="font-size:0.96rem;">Pilih Foto untuk Diperjelas (HD)</strong>
+          <span style="font-size:0.78rem;opacity:0.65;margin-top:4px;">JPG, PNG, WEBP • Maksimal 6 MB</span>
+        </label>
+
+        <div id="upEditorWrap" class="hidden" style="display:flex;flex-direction:column;gap:12px;">
+          <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;">
+            <span id="upResBadge" style="font-size:0.76rem;font-weight:700;padding:4px 10px;border-radius:8px;background:rgba(255,255,255,0.08);">HD Ready</span>
+            <div style="display:flex;gap:6px;">
+              <button type="button" id="btnUpChangePhoto" class="btn-ghost-sm">Ganti Foto</button>
+              <button type="button" id="btnUpDownload" class="btn-emerald" style="padding:7px 14px;font-size:0.82rem;">Unduh HD PNG</button>
+            </div>
+          </div>
+
+          <div id="upCompareBox" style="position:relative;width:100%;max-height:430px;border-radius:14px;overflow:hidden;background:#0a0a0c;border:1px solid rgba(255,255,255,0.12);touch-action:none;user-select:none;cursor:ew-resize;">
+            <canvas id="upCanvasAfter" style="width:100%;height:auto;max-height:430px;object-fit:contain;display:block;"></canvas>
+            <canvas id="upCanvasBefore" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;clip-path:inset(0 50% 0 0);"></canvas>
+            <span style="position:absolute;top:10px;left:10px;background:rgba(0,0,0,0.7);color:#fff;font-size:0.7rem;font-weight:700;padding:3px 8px;border-radius:6px;pointer-events:none;">Before</span>
+            <span style="position:absolute;top:10px;right:10px;background:rgba(16,185,129,0.88);color:#052e16;font-size:0.7rem;font-weight:800;padding:3px 8px;border-radius:6px;pointer-events:none;">After HD</span>
+            <div id="upSliderHandle" style="position:absolute;top:0;bottom:0;left:50%;width:2px;background:#10b981;box-shadow:0 0 8px rgba(0,0,0,0.8);pointer-events:none;">
+              <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:28px;height:28px;border-radius:50%;background:#10b981;color:#052e16;font-weight:900;font-size:0.78rem;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,0.5);">↔</div>
+            </div>
+          </div>
+
+          <p id="upStatusText" style="margin:0;font-size:0.78rem;opacity:0.75;text-align:center;">Geser garis tengah untuk membandingkan Before / After</p>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+            <div style="background:rgba(255,255,255,0.04);padding:10px;border-radius:12px;">
+              <div style="font-size:0.75rem;opacity:0.7;margin-bottom:6px;">Mode Enhancer</div>
+              <div style="display:flex;gap:6px;">
+                <button type="button" class="btn-ghost-sm active" data-upscale-mode="instant" style="flex:1;padding:6px 4px;font-size:0.76rem;">Instan HD</button>
+                <button type="button" class="btn-ghost-sm" data-upscale-mode="ai" style="flex:1;padding:6px 4px;font-size:0.76rem;">AI Super-Res</button>
+              </div>
+            </div>
+            <div style="background:rgba(255,255,255,0.04);padding:10px;border-radius:12px;">
+              <div style="font-size:0.75rem;opacity:0.7;margin-bottom:6px;">Resolusi Upscale</div>
+              <div style="display:flex;gap:6px;">
+                <button type="button" class="btn-ghost-sm active" data-upscale-factor="2" style="flex:1;padding:6px;font-size:0.78rem;">2x HD</button>
+                <button type="button" class="btn-ghost-sm" data-upscale-factor="4" style="flex:1;padding:6px;font-size:0.78rem;">4x Ultra</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="background:rgba(255,255,255,0.04);padding:12px;border-radius:12px;display:flex;flex-direction:column;gap:10px;">
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:0.8rem;">
+              <span>Ketajaman Detail (Sharpness)</span>
+              <input id="upSharpRange" type="range" min="0" max="100" value="55" />
+            </label>
+            <label style="display:flex;flex-direction:column;gap:4px;font-size:0.8rem;">
+              <span>Kejernihan & Kontras Mikro (Clarity)</span>
+              <input id="upClarityRange" type="range" min="0" max="100" value="35" />
+            </label>
+          </div>
+        </div>
+      </div>
+    </section>
+  
   </main>
 
   <!-- Footer Profesional -->
