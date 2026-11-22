@@ -514,7 +514,21 @@ export function initDownloaderModule() {
           body: JSON.stringify({ url: cleanUrl }),
         });
         data = await res.json();
-        if (!res.ok || !data?.ok) {
+        if (!data?.ok && data?.directFallback) {
+          const fb = data.directFallback;
+          const headers = { "Accept": "application/json", "Content-Type": "application/json" };
+          if (fb.apiKey) headers["Authorization"] = "Api-Key " + fb.apiKey;
+          const directRes = await fetch(fb.endpoint, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ url: fb.url }),
+          });
+          const directJson = await directRes.json().catch(() => null);
+          if (!directRes.ok || !directJson?.links?.length) {
+            throw new Error(directJson?.detail || "Gagal mengambil media dari server ekstraktor.");
+          }
+          data = directJson;
+        } else if (!res.ok || !data?.ok) {
           throw new Error(data?.error || "Gagal mengambil tautan media.");
         }
       }
