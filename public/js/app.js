@@ -1,11 +1,11 @@
-import { initUpscalerModule } from "./modules/upscaler.js?v=11";
 import {
   initAdSystem,
   guardActionAgainstAdblock,
   refreshAdSlotsOnTabSwitch,
 } from "./adblock.js?v=4";
 import { initDownloaderModule } from "./modules/downloader.js?v=4";
-import { initRemoveBgModule } from "./modules/removebg.js?v=11";
+import { initRemoveBgModule } from "./modules/removebg.js?v=4";
+import { initUpscalerModule } from "./modules/upscaler.js?v=12";
 import { initQrModule } from "./modules/qrstudio.js?v=4";
 import { initBratModule } from "./modules/brat.js?v=4";
 
@@ -95,7 +95,3 @@ initQrModule();
 initBratModule();
 
 export { guardActionAgainstAdblock };
-
-
-
-

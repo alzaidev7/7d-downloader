@@ -1,7 +1,3 @@
-import * as AppHelpers from "../app.js?v=9";
-const guardActionAgainstAdblock = AppHelpers.guardActionAgainstAdblock || (() => true);
-const saveLocalHistory = AppHelpers.saveLocalHistory || (() => {});
-
 let srPipelinePromise = null;
 
 async function getSuperResPipeline(onProgress) {
@@ -103,7 +99,7 @@ function openHdAdGate(onComplete) {
     modal = document.createElement("div");
     modal.id = "upAdGateModal";
     modal.style.cssText =
-      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.82);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px;";
+      "position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.84);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:18px;";
     modal.innerHTML = `
       <div style="width:100%;max-width:360px;background:#141418;border:1px solid rgba(255,255,255,0.14);border-radius:18px;padding:18px;text-align:center;color:#fff;box-shadow:0 18px 45px rgba(0,0,0,0.65);">
         <div style="font-size:0.75rem;font-weight:700;color:#10b981;letter-spacing:0.5px;margin-bottom:4px;">7D ULTRA HD EXPORT</div>
@@ -113,7 +109,7 @@ function openHdAdGate(onComplete) {
           Sponsor / Iklan 7D
         </div>
         <button type="button" id="btnUpAdGateAction" disabled style="width:100%;padding:11px;border-radius:12px;border:none;background:#10b981;color:#052e16;font-weight:800;font-size:0.88rem;cursor:pointer;">
-          Tunggu 20 detik...
+          Menyiapkan HD (20d)...
         </button>
       </div>
     `;
@@ -165,7 +161,7 @@ export function initUpscalerModule() {
   let originalBitmap = null;
   let originalFileName = "photo";
   let scaleFactor = 2;
-  let presetMode = "ultrahd"; // "original" | "ultrahd" | "uhdai"
+  let presetMode = "ultrahd";
   let sharpnessVal = 62;
   let clarityVal = 40;
   let splitRatio = 0.5;
@@ -180,9 +176,7 @@ export function initUpscalerModule() {
     splitRatio = Math.max(0.02, Math.min(0.98, rel));
     const pct = (splitRatio * 100).toFixed(2);
     canvasBefore.style.clipPath = `inset(0 ${100 - pct}% 0 0)`;
-    if (sliderHandle) {
-      sliderHandle.style.left = `${pct}%`;
-    }
+    if (sliderHandle) sliderHandle.style.left = `${pct}%`;
   }
 
   compareBox?.addEventListener("pointerdown", (e) => {
@@ -194,16 +188,11 @@ export function initUpscalerModule() {
     if (!isSliding) return;
     updateSplitPosition(e.clientX);
   });
-  compareBox?.addEventListener("pointerup", () => {
-    isSliding = false;
-  });
-  compareBox?.addEventListener("pointercancel", () => {
-    isSliding = false;
-  });
+  compareBox?.addEventListener("pointerup", () => { isSliding = false; });
+  compareBox?.addEventListener("pointercancel", () => { isSliding = false; });
 
   async function renderEnhancedResult() {
     if (!originalBitmap) return;
-
     const statusEl = document.getElementById("upStatusText");
     const btnDownload = document.getElementById("btnUpDownload");
     if (btnDownload) btnDownload.disabled = true;
@@ -291,15 +280,12 @@ export function initUpscalerModule() {
   }
 
   fileInput.addEventListener("change", async (e) => {
-    if (!guardActionAgainstAdblock()) return;
     const file = e.target.files?.[0];
     if (!file) return;
-
     if (file.size > 6 * 1024 * 1024) {
       alert("Ukuran foto maksimal 6 MB.");
       return;
     }
-
     originalFileName = file.name.replace(/\.[^.]+$/, "") || "photo";
     originalBitmap = await createImageBitmap(file);
     baseAiCanvas = null;
@@ -309,14 +295,13 @@ export function initUpscalerModule() {
       b.classList.toggle("active", b.dataset.winkMode === "ultrahd");
     });
 
-    dropZone?.classList.add("hidden");
+    if (dropZone) dropZone.style.display = "none";
     if (editorWrap) {
       editorWrap.classList.remove("hidden");
       editorWrap.style.display = "flex";
     }
 
     await renderEnhancedResult();
-    saveLocalHistory("upscaler", file.name, `${scaleFactor}x Ultra HD`);
   });
 
   document.getElementById("btnUpChangePhoto")?.addEventListener("click", () => {
@@ -327,8 +312,7 @@ export function initUpscalerModule() {
   document.getElementById("btnUpToggleIntensity")?.addEventListener("click", () => {
     const panel = document.getElementById("upIntensityPanel");
     if (!panel) return;
-    const isHidden = panel.style.display === "none" || !panel.style.display;
-    panel.style.display = isHidden ? "flex" : "none";
+    panel.style.display = panel.style.display === "flex" ? "none" : "flex";
   });
 
   document.querySelectorAll("[data-wink-mode]").forEach((btn) => {
@@ -361,21 +345,15 @@ export function initUpscalerModule() {
   document.getElementById("upClarityRange")?.addEventListener("change", renderEnhancedResult);
 
   document.getElementById("btnUpDownload")?.addEventListener("click", () => {
-    if (!guardActionAgainstAdblock() || !canvasAfter.width) return;
-
-    // Trigger direct link pengiklan jika tersedia
+    if (!canvasAfter.width) return;
     if (typeof window.trigger7DAdSlot5 === "function") {
       window.trigger7DAdSlot5();
     }
-
-    const triggerFileDownload = () => {
+    openHdAdGate(() => {
       const a = document.createElement("a");
       a.href = canvasAfter.toDataURL("image/png");
       a.download = `7d-ultrahd-${scaleFactor}x-${originalFileName}.png`;
       a.click();
-    };
-
-    // Pakai Ad-Gate 5 detik dari app.js jika tersedia, atau modal Ad-Gate HD bawaan
-    openHdAdGate(triggerFileDownload);
+    });
   });
 }

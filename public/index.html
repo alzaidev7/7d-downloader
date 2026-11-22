@@ -7,7 +7,7 @@
   <meta name="description" content="Unduh video MP4 HD & MP3 tanpa watermark dari TikTok, YouTube, Instagram, Facebook. Lengkap dengan AI Remove BG, Smart QR Studio, dan Brat Sticker Generator gratis." />
   <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="apple-touch-icon" href="/logo.png" />
-  <link rel="stylesheet" href="css/style.css?v=11" />
+  <link rel="stylesheet" href="css/style.css?v=12" />
   <script defer src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
 </head>
 <body>
@@ -30,7 +30,7 @@
       <button type="button" class="tab-pill active" data-tab="downloader" role="tab" aria-selected="true">Downloader</button>
       <button type="button" class="tab-pill" data-tab="removebg" role="tab" aria-selected="false">Remove BG</button>
         <button type="button" class="tab-pill" data-tab="upscaler" role="tab" aria-selected="false">HD Image</button>
-        <button type="button" class="tab-pill" data-tab="qrstudio" role="tab" aria-selected="false">QR Studio</button>
+      <button type="button" class="tab-pill" data-tab="qrstudio" role="tab" aria-selected="false">QR Studio</button>
       <button type="button" class="tab-pill" data-tab="brat" role="tab" aria-selected="false">Brat Maker</button>
     </nav>
 
@@ -50,7 +50,7 @@
       <button type="button" id="btnDownloadRun" class="btn-emerald full">Download</button>
 
       <div class="platform-badges" style="margin-top: 14px;">
-        
+        <span class="badge">YouTube</span>
         <span class="badge">TikTok</span>
         <span class="badge">Instagram</span>
         <span class="badge">Facebook</span>
@@ -144,7 +144,7 @@
       </div>
     </section>
 
-    <section id="tab-upscaler" class="workspace-card hidden hidden" style="display:none;">
+    <section id="tab-upscaler" class="workspace-card hidden" style="display:none;">
       <div class="bento-card">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
           <h2 style="margin:0;font-size:1.25rem;">HD Image Studio</h2>
@@ -229,9 +229,7 @@
       </div>
     </section>
 
-    
-
-<!-- WORKSPACE 3: SMART QR STUDIO -->
+    <!-- WORKSPACE 3: SMART QR STUDIO -->
     <section id="tab-qrstudio" class="workspace-card hidden">
       <div class="card-header">
         <h1>Smart QR Studio</h1>
@@ -408,63 +406,48 @@
         </details>
       </div>
     </section>
-  
-    
-    
-          </div>
-          </div>
+  </main>
 
-          <script src="ads.js?v=4"></script>
-  <script type="module" src="js/app.js?v=11"></script>
+  <!-- Footer Profesional -->
+  <footer class="site-footer">
+    <div class="container footer-inner">
+      <p class="footer-brand">7D - Downloader</p>
+      <p class="footer-disclaimer">7D - Downloader tidak berafiliasi dengan TikTok, ByteDance, YouTube, Meta, maupun platform pihak ketiga mana pun. Gunakan hanya untuk mengunduh konten yang memiliki izin penggunaan pribadi.</p>
+      <p class="footer-copy">© 2026 7D - Downloader. All rights reserved.</p>
+    </div>
+  </footer>
 
-<script id="navFixInline">
-(function() {
-  function getPanelMap() {
-    var all = Array.from(document.querySelectorAll("[id]"));
-    return {
-      downloader: all.find(function(el) { return /downloader/i.test(el.id) && !/btn/i.test(el.id); }),
-      removebg: all.find(function(el) { return /removebg/i.test(el.id) && !/btn/i.test(el.id); }),
-      upscaler: all.find(function(el) { return /upscaler/i.test(el.id) && !/btn/i.test(el.id); }),
-      qr: all.find(function(el) { return /qr/i.test(el.id) && !/btn/i.test(el.id) && el.tagName !== "INPUT"; })
-    };
-  }
+  <!-- MODAL HD AD-GATE -->
+  <div id="hdGateModal" class="modal-backdrop hidden">
+    <div class="modal-box center">
+      <h3>Buka Kualitas HD</h3>
+      <p id="hdGateDesc">Lihat iklan singkat selama 5 detik untuk membuka tautan unduhan <strong>MP4 HD Tanpa Watermark</strong>.</p>
+      <button type="button" id="btnTriggerHdAd" class="btn-emerald full">Tonton Iklan & Buka HD</button>
+      <button type="button" id="btnCloseHdGate" class="btn-ghost-sm" style="margin-top:10px; width:100%;">Batal</button>
+    </div>
+  </div>
 
-  function matchKey(btn) {
-    var txt = ((btn.dataset.tab || "") + " " + (btn.dataset.target || "") + " " + (btn.textContent || "")).toLowerCase().trim();
-    if (txt.includes("downloader")) return "downloader";
-    if (txt.includes("remove bg")) return "removebg";
-    if (txt.includes("hd image")) return "upscaler";
-    if (txt.includes("qr studio")) return "qr";
-    return null;
-  }
+  <!-- PANEL RIWAYAT LOKAL -->
+  <div id="historyModal" class="modal-backdrop hidden">
+    <div class="modal-box">
+      <div class="modal-head">
+        <h3>Riwayat Lokal</h3>
+        <button type="button" id="btnHistoryClose" class="btn-icon">✕</button>
+      </div>
+      <ul id="historyList" class="history-list"></ul>
+    </div>
+  </div>
 
-  document.addEventListener("click", function(e) {
-    var btn = e.target.closest("button");
-    if (!btn) return;
-    var key = matchKey(btn);
-    if (!key) return;
+  <!-- MODAL ANTI-ADBLOCK -->
+  <div id="adblockModal" class="modal-backdrop hidden">
+    <div class="modal-box center">
+      <h3>AdBlock Terdeteksi</h3>
+      <p><strong>7D - Downloader</strong> menyediakan seluruh alat secara gratis berkat dukungan iklan ringan. Mohon nonaktifkan AdBlock atau DNS pemblokir iklan pada situs ini, lalu muat ulang halaman.</p>
+      <button type="button" id="btnReloadPage" class="btn-emerald full">Saya Sudah Matikan, Muat Ulang</button>
+    </div>
+  </div>
 
-    var map = getPanelMap();
-    if (!map[key]) return;
-
-    e.preventDefault();
-    e.stopImmediatePropagation();
-
-    document.querySelectorAll("button").forEach(function(b) {
-      if (matchKey(b)) b.classList.toggle("active", b === btn);
-    });
-
-    Object.keys(map).forEach(function(k) {
-      var panel = map[k];
-      if (!panel) return;
-      var active = (k === key);
-      panel.classList.toggle("hidden", !active);
-      panel.classList.toggle("active", active);
-      panel.style.display = active ? "block" : "none";
-    });
-  }, true);
-})();
-</script>
-
+  <script src="ads.js?v=4"></script>
+  <script type="module" src="js/app.js?v=12"></script>
 </body>
 </html>
