@@ -7,7 +7,7 @@
   <meta name="description" content="Unduh video MP4 HD & MP3 tanpa watermark dari TikTok, YouTube, Instagram, Facebook. Lengkap dengan AI Remove BG, Smart QR Studio, dan Brat Sticker Generator gratis." />
   <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="apple-touch-icon" href="/logo.png" />
-  <link rel="stylesheet" href="css/style.css?v=12" />
+  <link rel="stylesheet" href="css/style.css?v=14" />
   <script defer src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
 </head>
 <body>
@@ -30,7 +30,7 @@
       <button type="button" class="tab-pill active" data-tab="downloader" role="tab" aria-selected="true">Downloader</button>
       <button type="button" class="tab-pill" data-tab="removebg" role="tab" aria-selected="false">Remove BG</button>
         <button type="button" class="tab-pill" data-tab="upscaler" role="tab" aria-selected="false">HD Image</button>
-      <button type="button" class="tab-pill" data-tab="qrstudio" role="tab" aria-selected="false">QR Studio</button>
+        <button type="button" class="tab-pill" data-tab="qrstudio" role="tab" aria-selected="false">QR Studio</button>
       <button type="button" class="tab-pill" data-tab="brat" role="tab" aria-selected="false">Brat Maker</button>
     </nav>
 
@@ -154,7 +154,7 @@
           Perjelas foto buram menjadi Ultra HD dan bandingkan Sebelum & Sesudah secara langsung.
         </p>
 
-        <label id="upUploadDrop" class="upload-dropzone" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 16px;border:1.5px dashed rgba(255,255,255,0.22);border-radius:16px;cursor:pointer;text-align:center;">
+        <label id="upUploadDrop" class="upload-dropzone" style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:30px 16px;border:1.5px dashed rgba(128,128,128,0.35);border-radius:16px;cursor:pointer;text-align:center;">
           <input id="upFileInput" type="file" accept="image/png,image/jpeg,image/webp" class="hidden" />
           <span style="font-size:1.85rem;margin-bottom:6px;">✨</span>
           <strong class="drop-title" style="font-size:0.96rem;">Pilih Foto untuk Diperjelas (HD)</strong>
@@ -164,16 +164,16 @@
         <div id="upEditorWrap" class="hidden" style="display:none;flex-direction:column;gap:12px;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
             <button type="button" id="btnUpChangePhoto" class="btn-ghost-sm" style="padding:7px 12px;">‹ Ganti Foto</button>
-            <span id="upResBadge" style="font-size:0.74rem;font-weight:700;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,0.08);">Ultra HD</span>
+            <span id="upResBadge" style="font-size:0.74rem;font-weight:700;padding:4px 10px;border-radius:999px;background:rgba(128,128,128,0.16);">Ultra HD</span>
             <button type="button" id="btnUpDownload" class="btn-emerald" style="padding:7px 16px;border-radius:999px;font-size:0.84rem;font-weight:800;">Simpan HD</button>
           </div>
 
-          <div id="upCompareBox" style="position:relative;width:100%;max-height:440px;border-radius:16px;overflow:hidden;background:#0a0a0c;border:1px solid rgba(255,255,255,0.12);touch-action:none;user-select:none;cursor:ew-resize;">
+          <div id="upCompareBox" style="position:relative;width:100%;max-height:440px;border-radius:16px;overflow:hidden;background:#0a0a0c;border:1px solid rgba(128,128,128,0.25);touch-action:none;user-select:none;cursor:ew-resize;">
             <canvas id="upCanvasAfter" style="width:100%;height:auto;max-height:440px;object-fit:contain;display:block;"></canvas>
             <canvas id="upCanvasBefore" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain;display:block;clip-path:inset(0 50% 0 0);"></canvas>
 
-            <span style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);color:#fff;font-size:0.72rem;font-weight:700;padding:4px 10px;border-radius:999px;pointer-events:none;">Sebelum</span>
-            <span style="position:absolute;top:12px;right:12px;background:rgba(0,0,0,0.55);backdrop-filter:blur(4px);color:#fff;font-size:0.72rem;font-weight:700;padding:4px 10px;border-radius:999px;pointer-events:none;">Sesudah</span>
+            <span style="position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.58);backdrop-filter:blur(4px);color:#fff;font-size:0.72rem;font-weight:700;padding:4px 10px;border-radius:999px;pointer-events:none;">Sebelum</span>
+            <span style="position:absolute;top:12px;right:12px;background:rgba(0,0,0,0.58);backdrop-filter:blur(4px);color:#fff;font-size:0.72rem;font-weight:700;padding:4px 10px;border-radius:999px;pointer-events:none;">Sesudah</span>
 
             <div id="upSliderHandle" style="position:absolute;top:0;bottom:0;left:50%;width:1.5px;background:rgba(255,255,255,0.92);box-shadow:0 0 10px rgba(0,0,0,0.85);pointer-events:none;">
               <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:34px;height:34px;border-radius:50%;background:rgba(255,255,255,0.28);backdrop-filter:blur(6px);border:1.5px solid #fff;color:#fff;font-weight:900;font-size:0.75rem;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 10px rgba(0,0,0,0.5);">◀ ▶</div>
@@ -207,11 +207,11 @@
             </button>
           </div>
 
-          <button type="button" id="btnUpToggleIntensity" style="width:100%;padding:11px;border-radius:999px;border:none;background:#f4f4f5;color:#09090b;font-weight:800;font-size:0.86rem;cursor:pointer;">
+          <button type="button" id="btnUpToggleIntensity" style="width:100%;padding:11px;border-radius:999px;border:1px solid rgba(128,128,128,0.28);background:#f4f4f5;color:#09090b;font-weight:800;font-size:0.86rem;cursor:pointer;">
             Atur Intensitas & Resolusi (2x / 4x)
           </button>
 
-          <div id="upIntensityPanel" style="display:none;flex-direction:column;gap:10px;background:rgba(255,255,255,0.04);padding:12px;border-radius:14px;">
+          <div id="upIntensityPanel" style="display:none;flex-direction:column;gap:10px;background:rgba(128,128,128,0.08);padding:12px;border-radius:14px;">
             <div style="display:flex;gap:6px;">
               <button type="button" class="btn-ghost-sm active" data-upscale-factor="2" style="flex:1;padding:7px;font-size:0.8rem;">Resolusi 2x HD</button>
               <button type="button" class="btn-ghost-sm" data-upscale-factor="4" style="flex:1;padding:7px;font-size:0.8rem;">Resolusi 4x Ultra</button>
@@ -448,6 +448,88 @@
   </div>
 
   <script src="ads.js?v=4"></script>
-  <script type="module" src="js/app.js?v=12"></script>
+  <script type="module" src="js/app.js?v=14"></script>
+
+<script id="navFixInline">
+(function() {
+  // 1. Pastikan Tema Light/Dark bisa diklik kapan saja
+  function applySavedTheme() {
+    var saved = localStorage.getItem("7d_theme") || localStorage.getItem("theme");
+    if (saved === "light") {
+      document.documentElement.classList.add("light", "light-mode");
+      document.documentElement.setAttribute("data-theme", "light");
+      document.body.classList.add("light", "light-mode");
+    }
+  }
+  applySavedTheme();
+
+  document.addEventListener("click", function(e) {
+    var themeBtn = e.target.closest("#themeToggle, #btnTheme, [data-theme-toggle], button[aria-label*="tema" i], button[aria-label*="theme" i]");
+    if (!themeBtn) {
+      var headerBtns = Array.from(document.querySelectorAll("header button"));
+      var clickedHeaderBtn = e.target.closest("header button");
+      if (clickedHeaderBtn && headerBtns.length && clickedHeaderBtn === headerBtns[headerBtns.length - 1]) {
+        themeBtn = clickedHeaderBtn;
+      }
+    }
+    if (themeBtn) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      var isLight = document.documentElement.getAttribute("data-theme") === "light" ||
+                    document.documentElement.classList.contains("light") ||
+                    document.body.classList.contains("light-mode");
+      var nextLight = !isLight;
+      document.documentElement.classList.toggle("light", nextLight);
+      document.documentElement.classList.toggle("light-mode", nextLight);
+      document.body.classList.toggle("light", nextLight);
+      document.body.classList.toggle("light-mode", nextLight);
+      document.documentElement.setAttribute("data-theme", nextLight ? "light" : "dark");
+      localStorage.setItem("7d_theme", nextLight ? "light" : "dark");
+      localStorage.setItem("theme", nextLight ? "light" : "dark");
+      return;
+    }
+
+    // 2. Pastikan pindah menu Downloader / Remove BG / HD Image / QR Studio selalu sinkron
+    var navBtn = e.target.closest("button");
+    if (!navBtn) return;
+    var label = ((navBtn.dataset.tab || "") + " " + (navBtn.dataset.target || "") + " " + (navBtn.textContent || "")).toLowerCase().trim();
+    var targetKey = null;
+    if (label.includes("downloader")) targetKey = "downloader";
+    else if (label.includes("remove bg")) targetKey = "removebg";
+    else if (label.includes("hd image")) targetKey = "upscaler";
+    else if (label.includes("qr studio")) targetKey = "qr";
+
+    if (!targetKey) return;
+
+    var panels = {
+      downloader: document.querySelector("[id*="downloader" i]:not(button)"),
+      removebg: document.querySelector("[id*="removebg" i]:not(button)"),
+      upscaler: document.getElementById("tab-upscaler"),
+      qr: document.querySelector("[id*="qr" i]:not(button):not(input)")
+    };
+    if (!panels[targetKey]) return;
+
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    document.querySelectorAll("button").forEach(function(b) {
+      var t = ((b.dataset.tab || "") + " " + (b.dataset.target || "") + " " + (b.textContent || "")).toLowerCase().trim();
+      if (t.includes("downloader") || t.includes("remove bg") || t.includes("hd image") || t.includes("qr studio")) {
+        b.classList.toggle("active", b === navBtn);
+      }
+    });
+
+    Object.keys(panels).forEach(function(k) {
+      var el = panels[k];
+      if (!el) return;
+      var show = (k === targetKey);
+      el.classList.toggle("hidden", !show);
+      el.classList.toggle("active", show);
+      el.style.display = show ? "block" : "none";
+    });
+  }, true);
+})();
+</script>
+
 </body>
 </html>
