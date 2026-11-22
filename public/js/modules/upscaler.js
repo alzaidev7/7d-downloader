@@ -236,7 +236,7 @@ export function initUpscalerModule() {
     baseAiCanvas = null;
 
     dropZone?.classList.add("hidden");
-    editorWrap?.classList.remove("hidden");
+    if (editorWrap) { editorWrap.classList.remove("hidden"); editorWrap.style.display = "flex"; }
 
     await renderEnhancedResult();
     saveLocalHistory("upscaler", file.name, `${scaleFactor}x HD Enhancer`);
