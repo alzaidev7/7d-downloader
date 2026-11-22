@@ -113,7 +113,7 @@ function openHdAdGate(onComplete) {
           Sponsor / Iklan 7D
         </div>
         <button type="button" id="btnUpAdGateAction" disabled style="width:100%;padding:11px;border-radius:12px;border:none;background:#10b981;color:#052e16;font-weight:800;font-size:0.88rem;cursor:pointer;">
-          Tunggu 5 detik...
+          Tunggu 20 detik...
         </button>
       </div>
     `;
@@ -122,7 +122,7 @@ function openHdAdGate(onComplete) {
 
   modal.style.display = "flex";
   const btn = document.getElementById("btnUpAdGateAction");
-  let sec = 5;
+  let sec = 20;
   btn.disabled = true;
   btn.style.opacity = "0.65";
   btn.textContent = `Menyiapkan HD (${sec}d)...`;
@@ -376,10 +376,6 @@ export function initUpscalerModule() {
     };
 
     // Pakai Ad-Gate 5 detik dari app.js jika tersedia, atau modal Ad-Gate HD bawaan
-    if (typeof window.open7DAdGate === "function") {
-      window.open7DAdGate(triggerFileDownload);
-    } else {
-      openHdAdGate(triggerFileDownload);
-    }
+    openHdAdGate(triggerFileDownload);
   });
 }
