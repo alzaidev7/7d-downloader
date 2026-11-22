@@ -1,283 +1,292 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
+let segmenterInstance = null;
+
+async function getFastSegmenter() {
+  if (segmenterInstance) return segmenterInstance;
+  const vision = await import("https://esm.sh/@mediapipe/tasks-vision@0.10.14");
+  const fileset = await vision.FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  segmenterInstance = await vision.ImageSegmenter.createFromOptions(fileset, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/image_segmenter/selfie_segmenter/float16/latest/selfie_segmenter.tflite",
+      delegate: "CPU",
+    },
+    runningMode: "IMAGE",
+    outputCategoryMask: false,
+    outputConfidenceMasks: true,
+  });
+  return segmenterInstance;
+}
+
 export function initRemoveBgModule() {
   const fileInput = document.getElementById("bgFileInput");
-  const uploadDrop = document.getElementById("bgUploadDrop");
+  const dropZone = document.getElementById("bgUploadDrop");
   const editorWrap = document.getElementById("bgEditorWrap");
   const topTools = document.getElementById("bgTopTools");
-  const outCanvas = document.getElementById("bgCanvasOutput");
-  const outCtx = outCanvas.getContext("2d");
+  const canvas = document.getElementById("bgCanvasOutput");
+  if (!canvas || !fileInput) return;
+  const ctx = canvas.getContext("2d");
 
-  // Offscreen canvases untuk layer terpisah
-  const origCanvas = document.createElement("canvas");
-  const origCtx = origCanvas.getContext("2d");
+  const originalCanvas = document.createElement("canvas");
+  const maskCanvas = document.createElement("canvas");
+  const maskCtx = maskCanvas.getContext("2d");
   const cutoutCanvas = document.createElement("canvas");
   const cutoutCtx = cutoutCanvas.getContext("2d");
 
-  let bgState = { type: "transparent", color: "#18181b", image: null, blur: 0 };
-  let shadowBlur = 0;
-  let overlayText = { text: "", color: "#ffffff" };
-  let brushMode = "erase"; // 'erase' | 'restore'
+  let bgMode = "transparent";
+  let bgPhotoImg = null;
+  let blurAmount = 0;
+  let shadowAmount = 0;
+  let stickerText = "";
+  let stickerColor = "#ffffff";
+  let brushMode = "erase";
   let brushSize = 20;
   let isDrawing = false;
-  let isComparing = false;
+  let showOriginal = false;
 
   const undoStack = [];
   const redoStack = [];
 
-  function saveSnapshot() {
-    if (undoStack.length >= 12) undoStack.shift();
-    undoStack.push(cutoutCtx.getImageData(0, 0, cutoutCanvas.width, cutoutCanvas.height));
+  function pushMaskHistory() {
+    undoStack.push(maskCtx.getImageData(0, 0, maskCanvas.width, maskCanvas.height));
+    if (undoStack.length > 15) undoStack.shift();
     redoStack.length = 0;
   }
 
-  function composeLayers() {
-    const w = outCanvas.width;
-    const h = outCanvas.height;
-    outCtx.clearRect(0, 0, w, h);
+  function renderComposite() {
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
 
-    if (isComparing) {
-      outCtx.drawImage(origCanvas, 0, 0);
+    if (showOriginal) {
+      ctx.drawImage(originalCanvas, 0, 0);
       return;
     }
 
-    // Layer 1: Latar Belakang (Transparan / Warna / Foto + Blur)
-    outCtx.save();
-    if (bgState.blur > 0) outCtx.filter = `blur(${bgState.blur}px)`;
-    if (bgState.type === "color") {
-      outCtx.fillStyle = bgState.color;
-      outCtx.fillRect(0, 0, w, h);
-    } else if (bgState.type === "image" && bgState.image) {
-      outCtx.drawImage(bgState.image, 0, 0, w, h);
+    // 1. Gambar Latar Belakang
+    if (bgMode === "photo" && bgPhotoImg) {
+      ctx.save();
+      if (blurAmount > 0) ctx.filter = `blur(${blurAmount}px)`;
+      ctx.drawImage(bgPhotoImg, 0, 0, w, h);
+      ctx.restore();
+    } else if (bgMode !== "transparent") {
+      ctx.fillStyle = bgMode;
+      ctx.fillRect(0, 0, w, h);
     }
-    outCtx.restore();
 
-    // Layer 2: Subjek Utama + Drop Shadow
-    outCtx.save();
-    if (shadowBlur > 0) {
-      outCtx.shadowColor = "rgba(0, 0, 0, 0.55)";
-      outCtx.shadowBlur = shadowBlur;
-      outCtx.shadowOffsetY = Math.round(shadowBlur * 0.35);
+    // 2. Potong Objek Sesuai Masker
+    cutoutCtx.clearRect(0, 0, w, h);
+    cutoutCtx.globalCompositeOperation = "source-over";
+    cutoutCtx.drawImage(originalCanvas, 0, 0);
+    cutoutCtx.globalCompositeOperation = "destination-in";
+    cutoutCtx.drawImage(maskCanvas, 0, 0);
+
+    // 3. Tempel Objek + Bayangan
+    ctx.save();
+    if (shadowAmount > 0) {
+      ctx.shadowColor = "rgba(0, 0, 0, 0.65)";
+      ctx.shadowBlur = shadowAmount;
+      ctx.shadowOffsetY = Math.round(shadowAmount * 0.3);
     }
-    outCtx.drawImage(cutoutCanvas, 0, 0);
-    outCtx.restore();
+    ctx.drawImage(cutoutCanvas, 0, 0);
+    ctx.restore();
 
-    // Layer 3: Teks Stiker
-    if (overlayText.text) {
-      const size = Math.max(24, Math.round(w * 0.07));
-      outCtx.save();
-      outCtx.font = `800 ${size}px sans-serif`;
-      outCtx.textAlign = "center";
-      outCtx.lineWidth = Math.max(3, size * 0.1);
-      outCtx.strokeStyle = "#000000";
-      outCtx.fillStyle = overlayText.color;
-      outCtx.strokeText(overlayText.text, w / 2, h - size * 0.8);
-      outCtx.fillText(overlayText.text, w / 2, h - size * 0.8);
-      outCtx.restore();
+    // 4. Teks Stiker Opsional
+    if (stickerText) {
+      ctx.save();
+      const fontSize = Math.max(24, Math.round(w * 0.065));
+      ctx.font = `800 ${fontSize}px sans-serif`;
+      ctx.textAlign = "center";
+      ctx.fillStyle = stickerColor;
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = Math.max(3, Math.round(fontSize * 0.12));
+      ctx.strokeText(stickerText, w / 2, h - fontSize * 0.8);
+      ctx.fillText(stickerText, w / 2, h - fontSize * 0.8);
+      ctx.restore();
     }
   }
 
-  // Proses AI Background Removal (Lazy-loaded via CDN)
-  fileInput.addEventListener("change", async (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function processImageFile(file) {
+    if (!guardActionAgainstAdblock()) return;
     if (file.size > 4 * 1024 * 1024) {
-      return alert("Ukuran gambar maksimal 4 MB.");
+      fileInput.value = "";
+      return alert("Ukuran foto maksimal 4 MB agar proses AI cepat dan ringan.");
     }
 
-    const titleEl = uploadDrop.querySelector(".drop-title");
-    titleEl.textContent = "Memproses AI Hapus Latar (Mohon tunggu)...";
+    const titleEl = dropZone.querySelector(".drop-title");
+    const oldTitle = titleEl.textContent;
+    titleEl.textContent = "Memproses AI Cepat (< 1 detik)...";
 
     try {
-      // Muat gambar asli
-      const origUrl = URL.createObjectURL(file);
-      const origImg = await loadImage(origUrl);
+      const img = await createImageBitmap(file);
+      const maxDim = 1280;
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
 
-      // Batasi resolusi maks 1280px agar ringan di RAM HP
-      const scale = Math.min(1, 1280 / Math.max(origImg.width, origImg.height));
-      const w = Math.round(origImg.width * scale);
-      const h = Math.round(origImg.height * scale);
+      canvas.width = originalCanvas.width = maskCanvas.width = cutoutCanvas.width = w;
+      canvas.height = originalCanvas.height = maskCanvas.height = cutoutCanvas.height = h;
 
-      [outCanvas, origCanvas, cutoutCanvas].forEach((c) => {
-        c.width = w;
-        c.height = h;
-      });
-      origCtx.drawImage(origImg, 0, 0, w, h);
+      originalCanvas.getContext("2d").drawImage(img, 0, 0, w, h);
 
-      // Import modul AI secara dinamis saat dibutuhkan saja
-      const { removeBackground } = await import(
-        "https://esm.sh/@imgly/background-removal@1.4.5"
-      );
-      const resultBlob = await removeBackground(file);
-      const cutoutUrl = URL.createObjectURL(resultBlob);
-      const cutoutImg = await loadImage(cutoutUrl);
+      const segmenter = await getFastSegmenter();
+      const result = segmenter.segment(originalCanvas);
+      const confidence = result.confidenceMasks[0].getAsFloat32Array();
 
-      cutoutCtx.clearRect(0, 0, w, h);
-      cutoutCtx.drawImage(cutoutImg, 0, 0, w, h);
+      const maskImg = maskCtx.createImageData(w, h);
+      for (let i = 0; i < confidence.length; i++) {
+        // Confidence tinggi = objek utama, rendah = latar belakang
+        const alpha = confidence[i] > 0.45 ? Math.min(255, Math.round(confidence[i] * 255)) : 0;
+        const idx = i * 4;
+        maskImg.data[idx] = 255;
+        maskImg.data[idx + 1] = 255;
+        maskImg.data[idx + 2] = 255;
+        maskImg.data[idx + 3] = alpha;
+      }
+      maskCtx.putImageData(maskImg, 0, 0);
+      result.close();
 
       undoStack.length = 0;
-      saveSnapshot();
+      redoStack.length = 0;
+      pushMaskHistory();
 
-      uploadDrop.classList.add("hidden");
+      dropZone.classList.add("hidden");
       editorWrap.classList.remove("hidden");
       topTools.classList.remove("hidden");
-      composeLayers();
+      renderComposite();
+      saveLocalHistory("removebg", file.name, "Studio Cutout");
     } catch (err) {
       alert("Gagal memproses gambar: " + err.message);
-      titleEl.textContent = "Pilih atau Tarik Foto ke Sini";
+    } finally {
+      titleEl.textContent = oldTitle;
     }
+  }
+
+  fileInput.addEventListener("change", (e) => {
+    if (e.target.files?.[0]) processImageFile(e.target.files[0]);
   });
 
-  function loadImage(src) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      img.src = src;
-    });
-  }
-
-  // Kuas Hapus & Pulihkan (Mendukung sentuhan jari & mouse)
-  function getCanvasCoords(evt) {
-    const rect = outCanvas.getBoundingClientRect();
-    const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
-    const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
-    return {
-      x: ((clientX - rect.left) / rect.width) * outCanvas.width,
-      y: ((clientY - rect.top) / rect.height) * outCanvas.height,
-    };
-  }
-
-  function applyBrushStroke(x, y) {
-    const radius = (brushSize / 2) * (outCanvas.width / 350);
-    cutoutCtx.save();
-    cutoutCtx.beginPath();
-    cutoutCtx.arc(x, y, radius, 0, Math.PI * 2);
-    if (brushMode === "erase") {
-      cutoutCtx.globalCompositeOperation = "destination-out";
-      cutoutCtx.fill();
-    } else {
-      cutoutCtx.clip();
-      cutoutCtx.drawImage(origCanvas, 0, 0);
-    }
-    cutoutCtx.restore();
-    composeLayers();
-  }
-
-  const startDraw = (e) => {
-    isDrawing = true;
-    saveSnapshot();
-    const { x, y } = getCanvasCoords(e);
-    applyBrushStroke(x, y);
-  };
-  const moveDraw = (e) => {
-    if (!isDrawing) return;
-    e.preventDefault();
-    const { x, y } = getCanvasCoords(e);
-    applyBrushStroke(x, y);
-  };
-  const endDraw = () => { isDrawing = false; };
-
-  outCanvas.addEventListener("mousedown", startDraw);
-  outCanvas.addEventListener("mousemove", moveDraw);
-  window.addEventListener("mouseup", endDraw);
-  outCanvas.addEventListener("touchstart", startDraw, { passive: false });
-  outCanvas.addEventListener("touchmove", moveDraw, { passive: false });
-  window.addEventListener("touchend", endDraw);
-
-  // Navigasi Sub-panel Dock
+  // Tab Dock Editor
   document.querySelectorAll(".dock-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
       document.querySelectorAll(".dock-btn").forEach((b) => b.classList.remove("active"));
       document.querySelectorAll(".dock-panel").forEach((p) => p.classList.add("hidden"));
       btn.classList.add("active");
-      document.getElementById(btn.dataset.panel).classList.remove("hidden");
+      document.getElementById(btn.dataset.panel)?.classList.remove("hidden");
     });
   });
 
-  // Kontrol Latar Belakang
+  // Warna & Foto Latar
   document.querySelectorAll(".swatch").forEach((sw) => {
     sw.addEventListener("click", () => {
-      const val = sw.dataset.bg;
-      bgState = val === "transparent"
-        ? { ...bgState, type: "transparent" }
-        : { ...bgState, type: "color", color: val };
-      composeLayers();
+      bgMode = sw.dataset.bg;
+      renderComposite();
     });
   });
 
-  document.getElementById("bgColorPicker").addEventListener("input", (e) => {
-    bgState = { ...bgState, type: "color", color: e.target.value };
-    composeLayers();
+  document.getElementById("bgColorPicker")?.addEventListener("input", (e) => {
+    bgMode = e.target.value;
+    renderComposite();
   });
 
-  document.getElementById("bgCustomPhoto").addEventListener("change", async (e) => {
+  document.getElementById("bgCustomPhoto")?.addEventListener("change", async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    const img = await loadImage(URL.createObjectURL(f));
-    bgState = { ...bgState, type: "image", image: img };
-    composeLayers();
+    bgPhotoImg = await createImageBitmap(f);
+    bgMode = "photo";
+    renderComposite();
   });
 
-  // Kontrol Kuas, Efek, Teks, Undo/Redo, Bandingkan & Unduh
+  // Kuas Hapus / Pulihkan
   const btnErase = document.getElementById("btnBrushErase");
   const btnRestore = document.getElementById("btnBrushRestore");
-  btnErase.addEventListener("click", () => {
+  btnErase?.addEventListener("click", () => {
     brushMode = "erase";
     btnErase.classList.add("active");
     btnRestore.classList.remove("active");
   });
-  btnRestore.addEventListener("click", () => {
+  btnRestore?.addEventListener("click", () => {
     brushMode = "restore";
     btnRestore.classList.add("active");
     btnErase.classList.remove("active");
   });
 
-  document.getElementById("brushSizeRange").addEventListener("input", (e) => {
+  document.getElementById("brushSizeRange")?.addEventListener("input", (e) => {
     brushSize = Number(e.target.value);
   });
-  document.getElementById("bgBlurRange").addEventListener("input", (e) => {
-    bgState.blur = Number(e.target.value);
-    composeLayers();
+
+  function paintMask(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const x = ((clientX - rect.left) / rect.width) * canvas.width;
+    const y = ((clientY - rect.top) / rect.height) * canvas.height;
+    maskCtx.save();
+    maskCtx.globalCompositeOperation = brushMode === "erase" ? "destination-out" : "source-over";
+    maskCtx.fillStyle = "rgba(255,255,255,1)";
+    maskCtx.beginPath();
+    maskCtx.arc(x, y, brushSize, 0, Math.PI * 2);
+    maskCtx.fill();
+    maskCtx.restore();
+    renderComposite();
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    isDrawing = true;
+    pushMaskHistory();
+    paintMask(e.clientX, e.clientY);
   });
-  document.getElementById("bgShadowRange").addEventListener("input", (e) => {
-    shadowBlur = Number(e.target.value);
-    composeLayers();
+  canvas.addEventListener("pointermove", (e) => {
+    if (isDrawing) paintMask(e.clientX, e.clientY);
   });
-  document.getElementById("btnBgAddText").addEventListener("click", () => {
-    overlayText = {
-      text: document.getElementById("bgTextInput").value.trim(),
-      color: document.getElementById("bgTextColor").value,
-    };
-    composeLayers();
+  window.addEventListener("pointerup", () => {
+    isDrawing = false;
   });
 
-  document.getElementById("btnBgUndo").addEventListener("click", () => {
+  // Efek Blur, Bayangan & Teks
+  document.getElementById("bgBlurRange")?.addEventListener("input", (e) => {
+    blurAmount = Number(e.target.value);
+    renderComposite();
+  });
+  document.getElementById("bgShadowRange")?.addEventListener("input", (e) => {
+    shadowAmount = Number(e.target.value);
+    renderComposite();
+  });
+  document.getElementById("btnBgAddText")?.addEventListener("click", () => {
+    stickerText = document.getElementById("bgTextInput").value.trim();
+    stickerColor = document.getElementById("bgTextColor").value;
+    renderComposite();
+  });
+
+  // Undo, Redo, Bandingkan, Unduh PNG
+  document.getElementById("btnBgUndo")?.addEventListener("click", () => {
     if (undoStack.length <= 1) return;
     redoStack.push(undoStack.pop());
-    cutoutCtx.putImageData(undoStack[undoStack.length - 1], 0, 0);
-    composeLayers();
+    maskCtx.putImageData(undoStack[undoStack.length - 1], 0, 0);
+    renderComposite();
   });
-
-  document.getElementById("btnBgRedo").addEventListener("click", () => {
+  document.getElementById("btnBgRedo")?.addEventListener("click", () => {
     if (!redoStack.length) return;
     const next = redoStack.pop();
     undoStack.push(next);
-    cutoutCtx.putImageData(next, 0, 0);
-    composeLayers();
+    maskCtx.putImageData(next, 0, 0);
+    renderComposite();
+  });
+  const btnCompare = document.getElementById("btnBgCompare");
+  btnCompare?.addEventListener("pointerdown", () => {
+    showOriginal = true;
+    renderComposite();
+  });
+  btnCompare?.addEventListener("pointerup", () => {
+    showOriginal = false;
+    renderComposite();
   });
 
-  const btnCompare = document.getElementById("btnBgCompare");
-  btnCompare.addEventListener("pointerdown", () => { isComparing = true; composeLayers(); });
-  btnCompare.addEventListener("pointerup", () => { isComparing = false; composeLayers(); });
-  btnCompare.addEventListener("pointerleave", () => { isComparing = false; composeLayers(); });
-
-  document.getElementById("btnBgDownload").addEventListener("click", () => {
-    if (!guardActionAgainstAdblock()) return;
-    const link = document.createElement("a");
-    link.download = `7d-removebg-${Date.now()}.png`;
-    link.href = outCanvas.toDataURL("image/png");
-    link.click();
-    saveLocalHistory("removebg", "Edit Studio PNG", "#");
+  document.getElementById("btnBgDownload")?.addEventListener("click", () => {
+    const a = document.createElement("a");
+    a.href = canvas.toDataURL("image/png");
+    a.download = `7d-removebg-${Date.now()}.png`;
+    a.click();
   });
 }
