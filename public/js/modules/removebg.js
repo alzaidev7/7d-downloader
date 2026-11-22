@@ -47,6 +47,11 @@ export function initRemoveBgModule() {
   let isDrawing = false;
   let showOriginal = false;
 
+  // Koordinat & status indikator lingkaran merah
+  let pointerPos = null;
+  let lastPos = null;
+  let sizePreviewTimer = null;
+
   const undoStack = [];
   const redoStack = [];
 
@@ -56,7 +61,7 @@ export function initRemoveBgModule() {
     redoStack.length = 0;
   }
 
-  function renderComposite() {
+  function renderComposite(includeCursor = true) {
     const w = canvas.width;
     const h = canvas.height;
     ctx.clearRect(0, 0, w, h);
@@ -107,6 +112,28 @@ export function initRemoveBgModule() {
       ctx.fillText(stickerText, w / 2, h - fontSize * 0.8);
       ctx.restore();
     }
+
+    // 5. Indikator Lingkaran Merah saat sentuhan / atur ukuran kuas
+    if (includeCursor && pointerPos) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(pointerPos.x, pointerPos.y, brushSize, 0, Math.PI * 2);
+      ctx.fillStyle =
+        brushMode === "erase"
+          ? "rgba(239, 68, 68, 0.38)"
+          : "rgba(16, 185, 129, 0.35)";
+      ctx.fill();
+      ctx.lineWidth = Math.max(2, Math.round(w * 0.004));
+      ctx.strokeStyle = brushMode === "erase" ? "#ef4444" : "#10b981";
+      ctx.stroke();
+
+      // Titik pusat presisi di tengah lingkaran
+      ctx.beginPath();
+      ctx.arc(pointerPos.x, pointerPos.y, 2.5, 0, Math.PI * 2);
+      ctx.fillStyle = "#ffffff";
+      ctx.fill();
+      ctx.restore();
+    }
   }
 
   async function processImageFile(file) {
@@ -138,7 +165,6 @@ export function initRemoveBgModule() {
 
       const maskImg = maskCtx.createImageData(w, h);
       for (let i = 0; i < confidence.length; i++) {
-        // Confidence tinggi = objek utama, rendah = latar belakang
         const alpha = confidence[i] > 0.45 ? Math.min(255, Math.round(confidence[i] * 255)) : 0;
         const idx = i * 4;
         maskImg.data[idx] = 255;
@@ -156,7 +182,7 @@ export function initRemoveBgModule() {
       dropZone.classList.add("hidden");
       editorWrap.classList.remove("hidden");
       topTools.classList.remove("hidden");
-      renderComposite();
+      renderComposite(false);
       saveLocalHistory("removebg", file.name, "Studio Cutout");
     } catch (err) {
       alert("Gagal memproses gambar: " + err.message);
@@ -183,13 +209,13 @@ export function initRemoveBgModule() {
   document.querySelectorAll(".swatch").forEach((sw) => {
     sw.addEventListener("click", () => {
       bgMode = sw.dataset.bg;
-      renderComposite();
+      renderComposite(false);
     });
   });
 
   document.getElementById("bgColorPicker")?.addEventListener("input", (e) => {
     bgMode = e.target.value;
-    renderComposite();
+    renderComposite(false);
   });
 
   document.getElementById("bgCustomPhoto")?.addEventListener("change", async (e) => {
@@ -197,7 +223,7 @@ export function initRemoveBgModule() {
     if (!f) return;
     bgPhotoImg = await createImageBitmap(f);
     bgMode = "photo";
-    renderComposite();
+    renderComposite(false);
   });
 
   // Kuas Hapus / Pulihkan
@@ -214,49 +240,96 @@ export function initRemoveBgModule() {
     btnErase.classList.remove("active");
   });
 
+  // Pratinjau lingkaran merah di tengah kanvas saat slider ukuran kuas digeser
   document.getElementById("brushSizeRange")?.addEventListener("input", (e) => {
     brushSize = Number(e.target.value);
+    if (canvas.width > 0) {
+      pointerPos = { x: canvas.width / 2, y: canvas.height / 2 };
+      renderComposite(true);
+      clearTimeout(sizePreviewTimer);
+      sizePreviewTimer = setTimeout(() => {
+        if (!isDrawing) {
+          pointerPos = null;
+          renderComposite(false);
+        }
+      }, 600);
+    }
   });
 
-  function paintMask(clientX, clientY) {
+  function getCanvasCoords(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
-    const x = ((clientX - rect.left) / rect.width) * canvas.width;
-    const y = ((clientY - rect.top) / rect.height) * canvas.height;
+    return {
+      x: ((clientX - rect.left) / rect.width) * canvas.width,
+      y: ((clientY - rect.top) / rect.height) * canvas.height,
+    };
+  }
+
+  function paintMaskStroke(fromPos, toPos) {
     maskCtx.save();
     maskCtx.globalCompositeOperation = brushMode === "erase" ? "destination-out" : "source-over";
+    maskCtx.strokeStyle = "rgba(255,255,255,1)";
     maskCtx.fillStyle = "rgba(255,255,255,1)";
+    maskCtx.lineWidth = brushSize * 2;
+    maskCtx.lineCap = "round";
+    maskCtx.lineJoin = "round";
+
     maskCtx.beginPath();
-    maskCtx.arc(x, y, brushSize, 0, Math.PI * 2);
+    maskCtx.moveTo(fromPos.x, fromPos.y);
+    maskCtx.lineTo(toPos.x, toPos.y);
+    maskCtx.stroke();
+
+    maskCtx.beginPath();
+    maskCtx.arc(toPos.x, toPos.y, brushSize, 0, Math.PI * 2);
     maskCtx.fill();
     maskCtx.restore();
-    renderComposite();
+
+    renderComposite(true);
   }
 
   canvas.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    canvas.setPointerCapture?.(e.pointerId);
     isDrawing = true;
     pushMaskHistory();
-    paintMask(e.clientX, e.clientY);
+    const pos = getCanvasCoords(e.clientX, e.clientY);
+    pointerPos = pos;
+    lastPos = pos;
+    paintMaskStroke(pos, pos);
   });
+
   canvas.addEventListener("pointermove", (e) => {
-    if (isDrawing) paintMask(e.clientX, e.clientY);
+    if (!isDrawing) return;
+    e.preventDefault();
+    const pos = getCanvasCoords(e.clientX, e.clientY);
+    pointerPos = pos;
+    paintMaskStroke(lastPos || pos, pos);
+    lastPos = pos;
   });
-  window.addEventListener("pointerup", () => {
+
+  function stopDrawing() {
+    if (!isDrawing) return;
     isDrawing = false;
-  });
+    lastPos = null;
+    pointerPos = null;
+    renderComposite(false);
+  }
+
+  canvas.addEventListener("pointerup", stopDrawing);
+  canvas.addEventListener("pointercancel", stopDrawing);
 
   // Efek Blur, Bayangan & Teks
   document.getElementById("bgBlurRange")?.addEventListener("input", (e) => {
     blurAmount = Number(e.target.value);
-    renderComposite();
+    renderComposite(false);
   });
   document.getElementById("bgShadowRange")?.addEventListener("input", (e) => {
     shadowAmount = Number(e.target.value);
-    renderComposite();
+    renderComposite(false);
   });
   document.getElementById("btnBgAddText")?.addEventListener("click", () => {
     stickerText = document.getElementById("bgTextInput").value.trim();
     stickerColor = document.getElementById("bgTextColor").value;
-    renderComposite();
+    renderComposite(false);
   });
 
   // Undo, Redo, Bandingkan, Unduh PNG
@@ -264,26 +337,27 @@ export function initRemoveBgModule() {
     if (undoStack.length <= 1) return;
     redoStack.push(undoStack.pop());
     maskCtx.putImageData(undoStack[undoStack.length - 1], 0, 0);
-    renderComposite();
+    renderComposite(false);
   });
   document.getElementById("btnBgRedo")?.addEventListener("click", () => {
     if (!redoStack.length) return;
     const next = redoStack.pop();
     undoStack.push(next);
     maskCtx.putImageData(next, 0, 0);
-    renderComposite();
+    renderComposite(false);
   });
   const btnCompare = document.getElementById("btnBgCompare");
   btnCompare?.addEventListener("pointerdown", () => {
     showOriginal = true;
-    renderComposite();
+    renderComposite(false);
   });
   btnCompare?.addEventListener("pointerup", () => {
     showOriginal = false;
-    renderComposite();
+    renderComposite(false);
   });
 
   document.getElementById("btnBgDownload")?.addEventListener("click", () => {
+    renderComposite(false);
     const a = document.createElement("a");
     a.href = canvas.toDataURL("image/png");
     a.download = `7d-removebg-${Date.now()}.png`;
