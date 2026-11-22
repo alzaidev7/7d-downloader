@@ -7,6 +7,22 @@ function extractFirstHttpsUrl(text) {
   return match ? match[0] : null;
 }
 
+function formatCompactNumber(num) {
+  const n = Number(num);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return (n / 1_000).toFixed(1).replace(/\.0$/, "") + "K";
+  return String(n);
+}
+
+function formatDuration(sec) {
+  const s = Math.floor(Number(sec) || 0);
+  if (s <= 0) return null;
+  const mins = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${String(mins).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
+}
+
 async function fetchTikTokClientSide(cleanUrl) {
   try {
     const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}&hd=1`;
@@ -46,7 +62,18 @@ async function fetchTikTokClientSide(cleanUrl) {
     return {
       ok: true,
       title: d.title || "TikTok Video",
-      cover: d.cover || "",
+      cover: d.cover || d.origin_cover || "",
+      previewVideo: d.play || "",
+      duration: formatDuration(d.duration),
+      author: {
+        name: d.author?.nickname || d.author?.unique_id || "TikTok Creator",
+        avatar: d.author?.avatar || "",
+      },
+      stats: {
+        likes: formatCompactNumber(d.digg_count),
+        comments: formatCompactNumber(d.comment_count),
+        shares: formatCompactNumber(d.share_count),
+      },
       links,
     };
   } catch {
@@ -111,12 +138,99 @@ export function initDownloaderModule() {
     resultBox.innerHTML = "";
     resultBox.classList.remove("hidden");
 
+    const card = document.createElement("div");
+    card.style.cssText =
+      "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;overflow:hidden;";
+
+    // 1. Area Preview Media (Video / Thumbnail + Durasi)
+    const videoSrc =
+      data.previewVideo ||
+      (data.links || []).find((l) => l.type === "mp4")?.url ||
+      "";
+
+    if (data.cover || videoSrc) {
+      const mediaWrap = document.createElement("div");
+      mediaWrap.style.cssText =
+        "position:relative;width:100%;aspect-ratio:16/10;background:#0a0a0c;overflow:hidden;";
+
+      if (videoSrc) {
+        const videoEl = document.createElement("video");
+        videoEl.src = videoSrc;
+        if (data.cover) videoEl.poster = data.cover;
+        videoEl.controls = true;
+        videoEl.playsInline = true;
+        videoEl.preload = "metadata";
+        videoEl.style.cssText = "width:100%;height:100%;object-fit:contain;display:block;";
+        mediaWrap.appendChild(videoEl);
+      } else if (data.cover) {
+        const imgEl = document.createElement("img");
+        imgEl.src = data.cover;
+        imgEl.alt = "Preview Video";
+        imgEl.style.cssText = "width:100%;height:100%;object-fit:cover;display:block;";
+        mediaWrap.appendChild(imgEl);
+      }
+
+      if (data.duration) {
+        const badge = document.createElement("span");
+        badge.textContent = data.duration;
+        badge.style.cssText =
+          "position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.72);color:#fff;font-size:0.75rem;font-weight:700;padding:3px 8px;border-radius:8px;pointer-events:none;";
+        mediaWrap.appendChild(badge);
+      }
+
+      card.appendChild(mediaWrap);
+    }
+
+    // 2. Area Info Kreator, Statistik & Caption
+    const bodyWrap = document.createElement("div");
+    bodyWrap.style.cssText = "padding:14px;";
+
+    if (data.author?.name) {
+      const authorRow = document.createElement("div");
+      authorRow.style.cssText = "display:flex;align-items:center;gap:10px;margin-bottom:10px;";
+
+      if (data.author.avatar) {
+        const avatar = document.createElement("img");
+        avatar.src = data.author.avatar;
+        avatar.alt = data.author.name;
+        avatar.style.cssText =
+          "width:42px;height:42px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.15);flex-shrink:0;";
+        authorRow.appendChild(avatar);
+      }
+
+      const metaCol = document.createElement("div");
+      metaCol.style.cssText = "min-width:0;flex:1;";
+
+      const nameEl = document.createElement("div");
+      nameEl.style.cssText =
+        "font-weight:700;font-size:0.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+      nameEl.textContent = data.author.name;
+      metaCol.appendChild(nameEl);
+
+      if (data.stats && (data.stats.likes || data.stats.comments || data.stats.shares)) {
+        const statsEl = document.createElement("div");
+        statsEl.style.cssText =
+          "display:flex;gap:12px;font-size:0.78rem;opacity:0.75;margin-top:2px;";
+        const parts = [];
+        if (data.stats.likes) parts.push(`♥ ${data.stats.likes}`);
+        if (data.stats.comments) parts.push(`💬 ${data.stats.comments}`);
+        if (data.stats.shares) parts.push(`↗ ${data.stats.shares}`);
+        statsEl.textContent = parts.join("   ");
+        metaCol.appendChild(statsEl);
+      }
+
+      authorRow.appendChild(metaCol);
+      bodyWrap.appendChild(authorRow);
+    }
+
     const titleEl = document.createElement("p");
     titleEl.className = "dl-title";
-    titleEl.style.cssText = "font-weight:700;margin-bottom:12px;font-size:0.95rem;";
+    titleEl.style.cssText =
+      "font-size:0.86rem;line-height:1.45;opacity:0.9;margin:0 0 14px 0;word-break:break-word;";
     titleEl.textContent = data.title || "Media Siap Diunduh";
-    resultBox.appendChild(titleEl);
+    bodyWrap.appendChild(titleEl);
 
+    // 3. Daftar Tombol Download
     const listWrap = document.createElement("div");
     listWrap.style.cssText = "display:flex;flex-direction:column;gap:10px;";
 
@@ -145,7 +259,9 @@ export function initDownloaderModule() {
       listWrap.appendChild(btn);
     });
 
-    resultBox.appendChild(listWrap);
+    bodyWrap.appendChild(listWrap);
+    card.appendChild(bodyWrap);
+    resultBox.appendChild(card);
   }
 
   btnRun.addEventListener("click", async () => {
@@ -165,12 +281,10 @@ export function initDownloaderModule() {
     try {
       let data = null;
 
-      // 1. Jika TikTok, ambil langsung via IP perangkat (anti blokir datacenter)
       if (cleanUrl.includes("tiktok.com")) {
         data = await fetchTikTokClientSide(cleanUrl);
       }
 
-      // 2. Jalur Backend untuk YouTube, Instagram, Facebook, atau cadangan TikTok
       if (!data) {
         const res = await fetch("/api/download", {
           method: "POST",
