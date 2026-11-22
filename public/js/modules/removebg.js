@@ -28,33 +28,6 @@ async function getGeneralRmbgPipeline(onProgress) {
   return rmbgPipelinePromise;
 }
 
-async function tryServerRemoveBg(canvasEl) {
-  const blob = await new Promise((resolve) => canvasEl.toBlob(resolve, "image/jpeg", 0.92));
-  if (!blob) return null;
-
-  const form = new FormData();
-  form.append("image", blob, "photo.jpg");
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 12000);
-
-  try {
-    const res = await fetch("/api/removebg", {
-      method: "POST",
-      body: form,
-      signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (!res.ok) return null;
-    const contentType = res.headers.get("Content-Type") || "";
-    if (!contentType.includes("image/png")) return null;
-    return await res.blob();
-  } catch {
-    clearTimeout(timer);
-    return null;
-  }
-}
-
 export function initRemoveBgModule() {
   const fileInput = document.getElementById("bgFileInput");
   const dropZone = document.getElementById("bgUploadDrop");
@@ -62,6 +35,15 @@ export function initRemoveBgModule() {
   const topTools = document.getElementById("bgTopTools");
   const canvas = document.getElementById("bgCanvasOutput");
   if (!canvas || !fileInput) return;
+
+  // Pre-warm bobot AI secara senyap saat pengguna membuka tab Remove BG
+  document.querySelectorAll("[data-tab='tab-removebg'], .nav-pill").forEach((el) => {
+    el.addEventListener("click", () => {
+      if (el.textContent?.includes("Remove BG")) {
+        getGeneralRmbgPipeline().catch(() => {});
+      }
+    });
+  });
 
   fileInput.multiple = true;
   const ctx = canvas.getContext("2d");
@@ -423,60 +405,60 @@ export function initRemoveBgModule() {
     origC.height = h;
     origC.getContext("2d").drawImage(img, 0, 0, w, h);
 
+    // Kanvas input ringan (768px) agar inferensi AI HP berjalan < 2 detik
+    const aiScale = Math.min(1, 768 / Math.max(w, h));
+    const aiW = Math.round(w * aiScale);
+    const aiH = Math.round(h * aiScale);
+    const aiInputC = document.createElement("canvas");
+    aiInputC.width = aiW;
+    aiInputC.height = aiH;
+    aiInputC.getContext("2d").drawImage(img, 0, 0, aiW, aiH);
+
     const mCanvas = document.createElement("canvas");
     mCanvas.width = w;
     mCanvas.height = h;
     const mCtx = mCanvas.getContext("2d");
 
-    const serverPngBlob = await tryServerRemoveBg(origC);
+    const { model, processor, RawImage } = await getGeneralRmbgPipeline(statusCallback);
+    if (statusCallback) statusCallback(98);
 
-    if (serverPngBlob) {
-      const cutoutBitmap = await createImageBitmap(serverPngBlob);
-      mCtx.clearRect(0, 0, w, h);
-      mCtx.drawImage(cutoutBitmap, 0, 0, w, h);
-    } else {
-      const { model, processor, RawImage } = await getGeneralRmbgPipeline(statusCallback);
-      if (statusCallback) statusCallback(98);
+    const rawImg = RawImage.fromCanvas(aiInputC);
+    const { pixel_values } = await processor(rawImg);
+    const { output } = await model({ input: pixel_values });
 
-      const rawImg = RawImage.fromCanvas(origC);
-      const { pixel_values } = await processor(rawImg);
-      const { output } = await model({ input: pixel_values });
+    const rawTensor = output[0];
+    const logits = rawTensor.data;
+    const outH = rawTensor.dims[rawTensor.dims.length - 2];
+    const outW = rawTensor.dims[rawTensor.dims.length - 1];
 
-      // Normalisasi Min-Max pada raw logit RMBG-1.4 agar objek tidak terpotong transparan
-      const rawTensor = output[0];
-      const logits = rawTensor.data;
-      const outH = rawTensor.dims[rawTensor.dims.length - 2];
-      const outW = rawTensor.dims[rawTensor.dims.length - 1];
-
-      let minVal = Infinity;
-      let maxVal = -Infinity;
-      for (let i = 0; i < logits.length; i++) {
-        const v = logits[i];
-        if (v < minVal) minVal = v;
-        if (v > maxVal) maxVal = v;
-      }
-      const range = maxVal - minVal || 1;
-
-      const normBytes = new Uint8ClampedArray(outW * outH);
-      for (let i = 0; i < normBytes.length; i++) {
-        normBytes[i] = Math.round(((logits[i] - minVal) / range) * 255);
-      }
-
-      const maskRaw = new RawImage(normBytes, outW, outH, 1);
-      const resizedMask = await maskRaw.resize(w, h);
-      const maskData = resizedMask.data;
-
-      const imgData = mCtx.createImageData(w, h);
-      const totalPixels = w * h;
-      for (let i = 0; i < totalPixels; i++) {
-        const idx = i * 4;
-        imgData.data[idx] = 255;
-        imgData.data[idx + 1] = 255;
-        imgData.data[idx + 2] = 255;
-        imgData.data[idx + 3] = maskData[i];
-      }
-      mCtx.putImageData(imgData, 0, 0);
+    let minVal = Infinity;
+    let maxVal = -Infinity;
+    for (let i = 0; i < logits.length; i++) {
+      const v = logits[i];
+      if (v < minVal) minVal = v;
+      if (v > maxVal) maxVal = v;
     }
+    const range = maxVal - minVal || 1;
+
+    const normBytes = new Uint8ClampedArray(outW * outH);
+    for (let i = 0; i < normBytes.length; i++) {
+      normBytes[i] = Math.round(((logits[i] - minVal) / range) * 255);
+    }
+
+    const maskRaw = new RawImage(normBytes, outW, outH, 1);
+    const resizedMask = await maskRaw.resize(w, h);
+    const maskData = resizedMask.data;
+
+    const imgData = mCtx.createImageData(w, h);
+    const totalPixels = w * h;
+    for (let i = 0; i < totalPixels; i++) {
+      const idx = i * 4;
+      imgData.data[idx] = 255;
+      imgData.data[idx + 1] = 255;
+      imgData.data[idx + 2] = 255;
+      imgData.data[idx + 3] = maskData[i];
+    }
+    mCtx.putImageData(imgData, 0, 0);
 
     const session = {
       id: `bg_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,

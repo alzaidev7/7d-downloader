@@ -1,6 +1,14 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
 let pendingHdUrl = null;
+let jsZipMod = null;
+
+async function getJSZip() {
+  if (jsZipMod) return jsZipMod;
+  const mod = await import("https://esm.sh/jszip@3.10.1");
+  jsZipMod = mod.default || mod;
+  return jsZipMod;
+}
 
 function extractFirstHttpsUrl(text) {
   const match = String(text || "").match(/https:\/\/[^\s"'<>]+/);
@@ -23,6 +31,29 @@ function formatDuration(sec) {
   return `${String(mins).padStart(2, "0")}:${String(rem).padStart(2, "0")}`;
 }
 
+function isVideoMediaUrl(url) {
+  const clean = String(url || "").split("?")[0].toLowerCase();
+  return clean.endsWith(".mp4") || clean.endsWith(".mov") || clean.includes("/video/");
+}
+
+async function triggerDirectFileDownload(url, fallbackFilename) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error("CORS");
+    const blob = await res.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = fallbackFilename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
+  } catch {
+    window.open(url, "_blank", "noopener,noreferrer");
+  }
+}
+
 async function fetchTikTokClientSide(cleanUrl) {
   try {
     const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}&hd=1`;
@@ -32,40 +63,84 @@ async function fetchTikTokClientSide(cleanUrl) {
     if (json?.code !== 0 || !json?.data) return null;
 
     const d = json.data;
+    const rawImages = Array.isArray(d.images) ? d.images : [];
+    const slides = rawImages
+      .map((item, idx) => {
+        const mediaUrl = typeof item === "string" ? item : item?.url || item?.play || "";
+        const liveVideoUrl =
+          typeof item === "object" && item?.video_url?.startsWith("https://")
+            ? item.video_url
+            : isVideoMediaUrl(mediaUrl)
+            ? mediaUrl
+            : "";
+        if (!mediaUrl.startsWith("https://")) return null;
+        return {
+          index: idx + 1,
+          url: mediaUrl,
+          liveVideoUrl,
+          isLive: Boolean(liveVideoUrl),
+        };
+      })
+      .filter(Boolean);
+
     const links = [];
-    if (d.hdplay?.startsWith("https://")) {
-      links.push({
-        label: "Download MP4 HD (No Watermark)",
-        url: d.hdplay,
-        quality: "hd",
-        type: "mp4",
-      });
-    }
-    if (d.play?.startsWith("https://")) {
-      links.push({
-        label: "Download MP4 (Standar)",
-        url: d.play,
-        quality: "sd",
-        type: "mp4",
-      });
-    }
-    if (d.music?.startsWith("https://")) {
-      links.push({
-        label: "Download MP3 (Audio Original)",
-        url: d.music,
-        quality: "audio",
-        type: "mp3",
-      });
+
+    if (slides.length > 0) {
+      // Mode Photo Slideshow / Live Photo TikTok
+      if (d.play?.startsWith("https://")) {
+        links.push({
+          label: "Download as video (MP4 Slideshow)",
+          url: d.play,
+          quality: "sd",
+          type: "mp4",
+        });
+      }
+      if (d.music?.startsWith("https://")) {
+        links.push({
+          label: "Download MP3 (Audio Original)",
+          url: d.music,
+          quality: "audio",
+          type: "mp3",
+        });
+      }
+    } else {
+      // Mode Video Reguler TikTok
+      if (d.hdplay?.startsWith("https://")) {
+        links.push({
+          label: "Download MP4 HD (No Watermark)",
+          url: d.hdplay,
+          quality: "hd",
+          type: "mp4",
+        });
+      }
+      if (d.play?.startsWith("https://")) {
+        links.push({
+          label: "Download MP4 (Standar)",
+          url: d.play,
+          quality: "sd",
+          type: "mp4",
+        });
+      }
+      if (d.music?.startsWith("https://")) {
+        links.push({
+          label: "Download MP3 (Audio Original)",
+          url: d.music,
+          quality: "audio",
+          type: "mp3",
+        });
+      }
     }
 
-    if (!links.length) return null;
+    if (!links.length && !slides.length) return null;
+
     return {
       ok: true,
-      title: d.title || "TikTok Video",
-      cover: d.cover || d.origin_cover || "",
-      duration: formatDuration(d.duration),
+      title: d.title || (slides.length ? "TikTok Photo Slideshow" : "TikTok Video"),
+      cover: slides.length ? "" : d.cover || d.origin_cover || "",
+      duration: slides.length ? "" : formatDuration(d.duration),
       author: {
-        name: d.author?.nickname || d.author?.unique_id || "TikTok Creator",
+        name: d.author?.nickname || "TikTok Creator",
+        username: d.author?.unique_id ? `@${d.author.unique_id}` : "",
         avatar: d.author?.avatar || "",
       },
       stats: {
@@ -73,6 +148,7 @@ async function fetchTikTokClientSide(cleanUrl) {
         comments: formatCompactNumber(d.comment_count),
         shares: formatCompactNumber(d.share_count),
       },
+      slides,
       links,
     };
   } catch {
@@ -137,12 +213,14 @@ export function initDownloaderModule() {
     resultBox.innerHTML = "";
     resultBox.classList.remove("hidden");
 
+    const hasSlides = Array.isArray(data.slides) && data.slides.length > 0;
+
     const card = document.createElement("div");
     card.style.cssText =
       "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;overflow:hidden;";
 
-    // 1. Area Preview Gambar Statis Saja (Tidak bisa diputar / diunduh langsung)
-    if (data.cover) {
+    // 1. Area Preview Gambar Statis (Khusus mode video tunggal)
+    if (!hasSlides && data.cover) {
       const mediaWrap = document.createElement("div");
       mediaWrap.style.cssText =
         "position:relative;width:100%;aspect-ratio:16/10;background:#0a0a0c;overflow:hidden;user-select:none;";
@@ -180,7 +258,7 @@ export function initDownloaderModule() {
         avatar.src = data.author.avatar;
         avatar.alt = data.author.name;
         avatar.style.cssText =
-          "width:42px;height:42px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.15);flex-shrink:0;";
+          "width:44px;height:44px;border-radius:50%;object-fit:cover;border:1px solid rgba(255,255,255,0.15);flex-shrink:0;";
         authorRow.appendChild(avatar);
       }
 
@@ -189,14 +267,21 @@ export function initDownloaderModule() {
 
       const nameEl = document.createElement("div");
       nameEl.style.cssText =
-        "font-weight:700;font-size:0.95rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        "font-weight:700;font-size:0.96rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
       nameEl.textContent = data.author.name;
       metaCol.appendChild(nameEl);
+
+      if (data.author.username) {
+        const userEl = document.createElement("div");
+        userEl.style.cssText = "font-size:0.8rem;opacity:0.68;margin-top:1px;";
+        userEl.textContent = data.author.username;
+        metaCol.appendChild(userEl);
+      }
 
       if (data.stats && (data.stats.likes || data.stats.comments || data.stats.shares)) {
         const statsEl = document.createElement("div");
         statsEl.style.cssText =
-          "display:flex;gap:12px;font-size:0.78rem;opacity:0.75;margin-top:2px;";
+          "display:flex;gap:12px;font-size:0.78rem;opacity:0.75;margin-top:3px;";
         const parts = [];
         if (data.stats.likes) parts.push(`♥ ${data.stats.likes}`);
         if (data.stats.comments) parts.push(`💬 ${data.stats.comments}`);
@@ -209,16 +294,71 @@ export function initDownloaderModule() {
       bodyWrap.appendChild(authorRow);
     }
 
-    const titleEl = document.createElement("p");
-    titleEl.className = "dl-title";
-    titleEl.style.cssText =
-      "font-size:0.86rem;line-height:1.45;opacity:0.9;margin:0 0 14px 0;word-break:break-word;";
-    titleEl.textContent = data.title || "Media Siap Diunduh";
-    bodyWrap.appendChild(titleEl);
+    if (data.title) {
+      const titleEl = document.createElement("p");
+      titleEl.className = "dl-title";
+      titleEl.style.cssText =
+        "font-size:0.86rem;line-height:1.45;opacity:0.9;margin:0 0 14px 0;word-break:break-word;";
+      titleEl.textContent = data.title;
+      bodyWrap.appendChild(titleEl);
+    }
 
-    // 3. Daftar Tombol Download (Semua melewati sistem iklan)
+    // 3. Tombol Aksi Utama (Termasuk Download All as ZIP untuk Photo Slideshow)
     const listWrap = document.createElement("div");
     listWrap.style.cssText = "display:flex;flex-direction:column;gap:10px;";
+
+    if (hasSlides) {
+      const btnZip = document.createElement("button");
+      btnZip.type = "button";
+      btnZip.className = "btn-emerald full";
+      btnZip.style.padding = "12px";
+      btnZip.textContent = `Download all items as ZIP (${data.slides.length} Slide HD)`;
+
+      btnZip.addEventListener("click", async () => {
+        if (!guardActionAgainstAdblock()) return;
+        if (typeof window.trigger7DAdSlot5 === "function") {
+          window.trigger7DAdSlot5();
+        }
+
+        const origText = btnZip.textContent;
+        btnZip.disabled = true;
+        btnZip.textContent = "Menyiapkan arsip ZIP...";
+
+        try {
+          const JSZip = await getJSZip();
+          const zip = new JSZip();
+
+          await Promise.all(
+            data.slides.map(async (slide) => {
+              const targetUrl = slide.liveVideoUrl || slide.url;
+              const ext = slide.isLive ? "mp4" : "jpg";
+              const resp = await fetch(targetUrl);
+              if (!resp.ok) return;
+              const blob = await resp.blob();
+              const num = String(slide.index).padStart(2, "0");
+              zip.file(`7d-slide-${num}.${ext}`, blob);
+            })
+          );
+
+          const zipBlob = await zip.generateAsync({ type: "blob" });
+          const zipUrl = URL.createObjectURL(zipBlob);
+          const a = document.createElement("a");
+          a.href = zipUrl;
+          a.download = `7d-tiktok-slides-${Date.now()}.zip`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(zipUrl), 6000);
+        } catch {
+          alert("Gagal membuat ZIP otomatis. Silakan unduh masing-masing slide di bawah.");
+        } finally {
+          btnZip.disabled = false;
+          btnZip.textContent = origText;
+        }
+      });
+
+      listWrap.appendChild(btnZip);
+    }
 
     (data.links || []).forEach((item) => {
       const btn = document.createElement("button");
@@ -249,6 +389,99 @@ export function initDownloaderModule() {
     });
 
     bodyWrap.appendChild(listWrap);
+
+    // 4. Grid Kartu Slide Individu (1 - 16+ Foto & Live Photo)
+    if (hasSlides) {
+      const slidesContainer = document.createElement("div");
+      slidesContainer.style.cssText =
+        "display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:14px;margin-top:16px;";
+
+      data.slides.forEach((slide) => {
+        const sCard = document.createElement("div");
+        sCard.style.cssText =
+          "background:rgba(0,0,0,0.28);border:1px solid rgba(255,255,255,0.1);border-radius:14px;overflow:hidden;display:flex;flex-direction:column;";
+
+        const thumbBox = document.createElement("div");
+        thumbBox.style.cssText =
+          "position:relative;width:100%;aspect-ratio:3/4;background:#09090b;overflow:hidden;user-select:none;";
+
+        // Badge nomor slide (pojok kanan atas)
+        const numBadge = document.createElement("span");
+        numBadge.textContent = String(slide.index);
+        numBadge.style.cssText =
+          "position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.75);color:#fff;font-size:0.75rem;font-weight:800;padding:3px 9px;border-radius:8px;z-index:2;pointer-events:none;";
+        thumbBox.appendChild(numBadge);
+
+        // Badge LIVE jika merupakan TikTok Live Photo (pojok kiri atas)
+        if (slide.isLive) {
+          const liveBadge = document.createElement("span");
+          liveBadge.textContent = "LIVE";
+          liveBadge.style.cssText =
+            "position:absolute;top:8px;left:8px;background:#10b981;color:#052e16;font-size:0.7rem;font-weight:800;padding:2px 7px;border-radius:6px;z-index:2;pointer-events:none;";
+          thumbBox.appendChild(liveBadge);
+        }
+
+        // Badge resolusi (pojok kiri bawah, otomatis terisi saat gambar dimuat)
+        const resBadge = document.createElement("span");
+        resBadge.style.cssText =
+          "position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.72);color:#fff;font-size:0.72rem;font-weight:600;padding:2px 7px;border-radius:6px;z-index:2;pointer-events:none;display:none;";
+        thumbBox.appendChild(resBadge);
+
+        if (isVideoMediaUrl(slide.url)) {
+          const posterPlaceholder = document.createElement("div");
+          posterPlaceholder.style.cssText =
+            "width:100%;height:100%;display:flex;align-items:center;justify-content:center;font-size:0.85rem;font-weight:700;opacity:0.85;";
+          posterPlaceholder.textContent = `Live Photo #${slide.index} (MP4)`;
+          thumbBox.appendChild(posterPlaceholder);
+        } else {
+          const img = document.createElement("img");
+          img.src = slide.url;
+          img.alt = `Slide ${slide.index}`;
+          img.loading = "lazy";
+          img.draggable = false;
+          img.addEventListener("contextmenu", (e) => e.preventDefault());
+          img.addEventListener("load", () => {
+            if (img.naturalWidth && img.naturalHeight) {
+              resBadge.textContent = `${img.naturalWidth}x${img.naturalHeight}`;
+              resBadge.style.display = "inline-block";
+            }
+          });
+          img.style.cssText =
+            "width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;";
+          thumbBox.appendChild(img);
+        }
+
+        sCard.appendChild(thumbBox);
+
+        const sActionWrap = document.createElement("div");
+        sActionWrap.style.cssText = "padding:10px;display:flex;flex-direction:column;gap:6px;";
+
+        const btnSlide = document.createElement("button");
+        btnSlide.type = "button";
+        btnSlide.className = "btn-emerald full";
+        btnSlide.style.cssText = "padding:10px;font-size:0.84rem;";
+        btnSlide.textContent = slide.isLive
+          ? `Download Live Photo #${slide.index}`
+          : "Download this slide";
+
+        btnSlide.addEventListener("click", async () => {
+          if (!guardActionAgainstAdblock()) return;
+          if (typeof window.trigger7DAdSlot5 === "function") {
+            window.trigger7DAdSlot5();
+          }
+          const target = slide.liveVideoUrl || slide.url;
+          const ext = slide.isLive ? "mp4" : "jpg";
+          await triggerDirectFileDownload(target, `7d-slide-${slide.index}.${ext}`);
+        });
+
+        sActionWrap.appendChild(btnSlide);
+        sCard.appendChild(sActionWrap);
+        slidesContainer.appendChild(sCard);
+      });
+
+      bodyWrap.appendChild(slidesContainer);
+    }
+
     card.appendChild(bodyWrap);
     resultBox.appendChild(card);
   }
@@ -258,7 +491,7 @@ export function initDownloaderModule() {
 
     const cleanUrl = extractFirstHttpsUrl(urlInput.value);
     if (!cleanUrl) {
-      return alert("Tempel tautan video yang valid (https://...) terlebih dahulu.");
+      return alert("Tempel tautan video/foto yang valid (https://...) terlebih dahulu.");
     }
     urlInput.value = cleanUrl;
 
@@ -289,7 +522,7 @@ export function initDownloaderModule() {
       renderDownloadResult(data);
       saveLocalHistory("downloader", data.title || cleanUrl, cleanUrl);
     } catch (err) {
-      alert(err.message || "Gagal memproses video. Pastikan video bersifat publik.");
+      alert(err.message || "Gagal memproses tautan. Pastikan postingan bersifat publik.");
     } finally {
       btnRun.disabled = false;
       btnRun.textContent = oldLabel;
