@@ -1,11 +1,11 @@
-import { initUpscalerModule } from "./modules/upscaler.js?v=10";
+import { initUpscalerModule } from "./modules/upscaler.js?v=11";
 import {
   initAdSystem,
   guardActionAgainstAdblock,
   refreshAdSlotsOnTabSwitch,
 } from "./adblock.js?v=4";
 import { initDownloaderModule } from "./modules/downloader.js?v=4";
-import { initRemoveBgModule } from "./modules/removebg.js?v=10";
+import { initRemoveBgModule } from "./modules/removebg.js?v=11";
 import { initQrModule } from "./modules/qrstudio.js?v=4";
 import { initBratModule } from "./modules/brat.js?v=4";
 
@@ -99,40 +99,3 @@ export { guardActionAgainstAdblock };
 
 
 
-// tab-upscaler-fallback
-(() => {
-  const PANELS = ["tab-downloader","tab-removebg","tab-upscaler","tab-qrstudio","qrTextMode","qrPhotoMode","qrPreviewWrap","qrCanvasContainer"];
-  function resolveTarget(btn) {
-    const raw = (btn.dataset.tab || btn.dataset.target || btn.dataset.panel || btn.textContent || "").trim().toLowerCase();
-    if (raw.includes("download")) return PANELS.find((p) => p.includes("downloader"));
-    if (raw.includes("remove")) return PANELS.find((p) => p.includes("removebg"));
-    if (raw.includes("hd") || raw.includes("upscal")) return PANELS.find((p) => p.includes("upscaler"));
-    if (raw.includes("qr")) return PANELS.find((p) => p.includes("qr"));
-    return null;
-  }
-
-  document.addEventListener("click", (e) => {
-    const btn = e.target.closest("button");
-    if (!btn) return;
-    const targetId = resolveTarget(btn);
-    if (!targetId) return;
-
-    e.preventDefault();
-    e.stopImmediatePropagation();
-
-    document.querySelectorAll("button").forEach((b) => {
-      if (resolveTarget(b)) {
-        b.classList.toggle("active", b === btn);
-      }
-    });
-
-    PANELS.forEach((id) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      const show = id === targetId;
-      el.classList.toggle("hidden", !show);
-      el.classList.toggle("active", show);
-      el.style.display = show ? "" : "none";
-    });
-  }, true);
-})();
