@@ -4,10 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>7D - Downloader</title>
-  <meta name="description" content="Unduh video MP4 HD & MP3 tanpa watermark dari TikTok, YouTube, Instagram, Facebook. Lengkap dengan AI Remove BG, Smart QR Studio, dan Brat Sticker Generator gratis." />
+  <meta name="description" content="Unduh video MP4 HD & MP3 tanpa watermark dari TikTok, Instagram, Facebook. Lengkap dengan AI Remove BG, Smart QR Studio, dan Brat Sticker Generator gratis." />
   <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="apple-touch-icon" href="/logo.png" />
-  <link rel="stylesheet" href="css/style.css?v=14" />
+  <link rel="stylesheet" href="css/style.css?v=15" />
   <script defer src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
 </head>
 <body>
@@ -50,7 +50,6 @@
       <button type="button" id="btnDownloadRun" class="btn-emerald full">Download</button>
 
       <div class="platform-badges" style="margin-top: 14px;">
-        <span class="badge">YouTube</span>
         <span class="badge">TikTok</span>
         <span class="badge">Instagram</span>
         <span class="badge">Facebook</span>
@@ -356,7 +355,7 @@
       <div class="feature-card">
         <div class="feat-icon">🎬</div>
         <h4>Multi-Platform Video</h4>
-        <p>Mendukung berbagai tautan publik dari TikTok, YouTube Shorts, Reels Instagram, hingga Facebook.</p>
+        <p>Mendukung berbagai tautan publik dari TikTok Shorts, Reels Instagram, hingga Facebook.</p>
       </div>
       <div class="feature-card">
         <div class="feat-icon">✂️</div>
@@ -412,7 +411,7 @@
   <footer class="site-footer">
     <div class="container footer-inner">
       <p class="footer-brand">7D - Downloader</p>
-      <p class="footer-disclaimer">7D - Downloader tidak berafiliasi dengan TikTok, ByteDance, YouTube, Meta, maupun platform pihak ketiga mana pun. Gunakan hanya untuk mengunduh konten yang memiliki izin penggunaan pribadi.</p>
+      <p class="footer-disclaimer">7D - Downloader tidak berafiliasi dengan TikTok, ByteDance, Meta, maupun platform pihak ketiga mana pun. Gunakan hanya untuk mengunduh konten yang memiliki izin penggunaan pribadi.</p>
       <p class="footer-copy">© 2026 7D - Downloader. All rights reserved.</p>
     </div>
   </footer>
@@ -448,81 +447,84 @@
   </div>
 
   <script src="ads.js?v=4"></script>
-  <script type="module" src="js/app.js?v=14"></script>
+  <script type="module" src="js/app.js?v=15"></script>
+
 
 <script id="navFixInline">
 (function() {
-  // 1. Pastikan Tema Light/Dark bisa diklik kapan saja
-  function applySavedTheme() {
-    var saved = localStorage.getItem("7d_theme") || localStorage.getItem("theme");
-    if (saved === "light") {
-      document.documentElement.classList.add("light", "light-mode");
-      document.documentElement.setAttribute("data-theme", "light");
-      document.body.classList.add("light", "light-mode");
-    }
+  var upPanelId = "tab-upscaler";
+
+  function applyTheme(isLight) {
+    document.documentElement.classList.toggle("light", isLight);
+    document.documentElement.classList.toggle("light-mode", isLight);
+    document.body.classList.toggle("light", isLight);
+    document.body.classList.toggle("light-mode", isLight);
+    document.documentElement.setAttribute("data-theme", isLight ? "light" : "dark");
+    try {
+      localStorage.setItem("7d_theme", isLight ? "light" : "dark");
+      localStorage.setItem("theme", isLight ? "light" : "dark");
+    } catch (err) {}
   }
-  applySavedTheme();
+
+  try {
+    var saved = localStorage.getItem("7d_theme") || localStorage.getItem("theme");
+    if (saved === "light") applyTheme(true);
+  } catch (err) {}
+
+  function getTabKey(btn) {
+    var t = ((btn.dataset.tab || "") + " " + (btn.dataset.target || "") + " " + (btn.textContent || "")).toLowerCase().trim();
+    if (t.indexOf("downloader") !== -1) return "downloader";
+    if (t.indexOf("remove bg") !== -1) return "removebg";
+    if (t.indexOf("hd image") !== -1) return "upscaler";
+    if (t.indexOf("qr studio") !== -1) return "qr";
+    return null;
+  }
 
   document.addEventListener("click", function(e) {
-    var themeBtn = e.target.closest("#themeToggle, #btnTheme, [data-theme-toggle], button[aria-label*="tema" i], button[aria-label*="theme" i]");
-    if (!themeBtn) {
-      var headerBtns = Array.from(document.querySelectorAll("header button"));
-      var clickedHeaderBtn = e.target.closest("header button");
-      if (clickedHeaderBtn && headerBtns.length && clickedHeaderBtn === headerBtns[headerBtns.length - 1]) {
-        themeBtn = clickedHeaderBtn;
+    // 1. Cek tombol ganti tema di header kanan atas
+    var headerBtn = e.target.closest("header button");
+    if (headerBtn) {
+      var hBtns = Array.from(document.querySelectorAll("header button"));
+      if (hBtns.length && headerBtn === hBtns[hBtns.length - 1]) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        var currentlyLight = document.documentElement.getAttribute("data-theme") === "light" ||
+                             document.documentElement.classList.contains("light") ||
+                             document.body.classList.contains("light-mode");
+        applyTheme(!currentlyLight);
+        return;
       }
     }
-    if (themeBtn) {
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      var isLight = document.documentElement.getAttribute("data-theme") === "light" ||
-                    document.documentElement.classList.contains("light") ||
-                    document.body.classList.contains("light-mode");
-      var nextLight = !isLight;
-      document.documentElement.classList.toggle("light", nextLight);
-      document.documentElement.classList.toggle("light-mode", nextLight);
-      document.body.classList.toggle("light", nextLight);
-      document.body.classList.toggle("light-mode", nextLight);
-      document.documentElement.setAttribute("data-theme", nextLight ? "light" : "dark");
-      localStorage.setItem("7d_theme", nextLight ? "light" : "dark");
-      localStorage.setItem("theme", nextLight ? "light" : "dark");
-      return;
-    }
 
-    // 2. Pastikan pindah menu Downloader / Remove BG / HD Image / QR Studio selalu sinkron
-    var navBtn = e.target.closest("button");
-    if (!navBtn) return;
-    var label = ((navBtn.dataset.tab || "") + " " + (navBtn.dataset.target || "") + " " + (navBtn.textContent || "")).toLowerCase().trim();
-    var targetKey = null;
-    if (label.includes("downloader")) targetKey = "downloader";
-    else if (label.includes("remove bg")) targetKey = "removebg";
-    else if (label.includes("hd image")) targetKey = "upscaler";
-    else if (label.includes("qr studio")) targetKey = "qr";
+    // 2. Cek tombol pindah menu
+    var btn = e.target.closest("button");
+    if (!btn) return;
+    var key = getTabKey(btn);
+    if (!key) return;
 
-    if (!targetKey) return;
-
+    var allIds = Array.from(document.querySelectorAll("[id]"));
     var panels = {
-      downloader: document.querySelector("[id*="downloader" i]:not(button)"),
-      removebg: document.querySelector("[id*="removebg" i]:not(button)"),
-      upscaler: document.getElementById("tab-upscaler"),
-      qr: document.querySelector("[id*="qr" i]:not(button):not(input)")
+      downloader: allIds.find(function(el) { return /downloader/i.test(el.id) && el.tagName !== "BUTTON"; }),
+      removebg: allIds.find(function(el) { return /removebg/i.test(el.id) && el.tagName !== "BUTTON"; }),
+      upscaler: document.getElementById(upPanelId),
+      qr: allIds.find(function(el) { return /qr/i.test(el.id) && el.tagName !== "BUTTON" && el.tagName !== "INPUT"; })
     };
-    if (!panels[targetKey]) return;
+
+    if (!panels[key]) return;
 
     e.preventDefault();
     e.stopImmediatePropagation();
 
     document.querySelectorAll("button").forEach(function(b) {
-      var t = ((b.dataset.tab || "") + " " + (b.dataset.target || "") + " " + (b.textContent || "")).toLowerCase().trim();
-      if (t.includes("downloader") || t.includes("remove bg") || t.includes("hd image") || t.includes("qr studio")) {
-        b.classList.toggle("active", b === navBtn);
+      if (getTabKey(b)) {
+        b.classList.toggle("active", b === btn);
       }
     });
 
     Object.keys(panels).forEach(function(k) {
       var el = panels[k];
       if (!el) return;
-      var show = (k === targetKey);
+      var show = (k === key);
       el.classList.toggle("hidden", !show);
       el.classList.toggle("active", show);
       el.style.display = show ? "block" : "none";

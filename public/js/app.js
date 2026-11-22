@@ -4,8 +4,8 @@ import {
   refreshAdSlotsOnTabSwitch,
 } from "./adblock.js?v=4";
 import { initDownloaderModule } from "./modules/downloader.js?v=4";
-import { initRemoveBgModule } from "./modules/removebg.js?v=14";
-import { initUpscalerModule } from "./modules/upscaler.js?v=14";
+import { initRemoveBgModule } from "./modules/removebg.js?v=15";
+import { initUpscalerModule } from "./modules/upscaler.js?v=15";
 import { initQrModule } from "./modules/qrstudio.js?v=4";
 import { initBratModule } from "./modules/brat.js?v=4";
 
