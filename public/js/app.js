@@ -53,11 +53,7 @@ tabButtons.forEach((btn) => {
 const historyModal = document.getElementById("historyModal");
 const historyList = document.getElementById("historyList");
 
-export function saveLocalHistory(tool, title, url) {
-  const items = JSON.parse(localStorage.getItem("7d_history") || "[]");
-  items.unshift({ tool, title, url, time: new Date().toLocaleTimeString("id-ID") });
-  localStorage.setItem("7d_history", JSON.stringify(items.slice(0, 20)));
-}
+export function saveLocalHistory() {}
 
 function renderLocalHistory() {
   const items = JSON.parse(localStorage.getItem("7d_history") || "[]");
