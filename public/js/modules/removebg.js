@@ -10,10 +10,8 @@ async function getGeneralRmbgPipeline(onProgress) {
       );
       env.allowLocalModels = false;
 
-      const device = typeof navigator !== "undefined" && navigator.gpu ? "webgpu" : "wasm";
       const model = await AutoModel.from_pretrained("briaai/RMBG-1.4", {
         dtype: "q8",
-        device,
         progress_callback: (info) => {
           if (info?.status === "progress" && typeof info.progress === "number" && onProgress) {
             onProgress(Math.min(95, Math.round(info.progress)));
@@ -38,7 +36,7 @@ async function tryServerRemoveBg(canvasEl) {
   form.append("image", blob, "photo.jpg");
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 18000);
+  const timer = setTimeout(() => controller.abort(), 12000);
 
   try {
     const res = await fetch("/api/removebg", {
@@ -430,7 +428,6 @@ export function initRemoveBgModule() {
     mCanvas.height = h;
     const mCtx = mCanvas.getContext("2d");
 
-    // 1. Coba jalur Server AI dulu (cepat < 1.5s & akurat untuk mobil/logo/orang)
     const serverPngBlob = await tryServerRemoveBg(origC);
 
     if (serverPngBlob) {
@@ -438,7 +435,6 @@ export function initRemoveBgModule() {
       mCtx.clearRect(0, 0, w, h);
       mCtx.drawImage(cutoutBitmap, 0, 0, w, h);
     } else {
-      // 2. Fallback ke model General Object RMBG-1.4 di browser
       const { model, processor, RawImage } = await getGeneralRmbgPipeline(statusCallback);
       if (statusCallback) statusCallback(98);
 
@@ -446,20 +442,38 @@ export function initRemoveBgModule() {
       const { pixel_values } = await processor(rawImg);
       const { output } = await model({ input: pixel_values });
 
-      const alphaTensor = output[0].mul(255).to("uint8");
-      const resizedMask = await RawImage.fromTensor(alphaTensor).resize(w, h);
+      // Normalisasi Min-Max pada raw logit RMBG-1.4 agar objek tidak terpotong transparan
+      const rawTensor = output[0];
+      const logits = rawTensor.data;
+      const outH = rawTensor.dims[rawTensor.dims.length - 2];
+      const outW = rawTensor.dims[rawTensor.dims.length - 1];
+
+      let minVal = Infinity;
+      let maxVal = -Infinity;
+      for (let i = 0; i < logits.length; i++) {
+        const v = logits[i];
+        if (v < minVal) minVal = v;
+        if (v > maxVal) maxVal = v;
+      }
+      const range = maxVal - minVal || 1;
+
+      const normBytes = new Uint8ClampedArray(outW * outH);
+      for (let i = 0; i < normBytes.length; i++) {
+        normBytes[i] = Math.round(((logits[i] - minVal) / range) * 255);
+      }
+
+      const maskRaw = new RawImage(normBytes, outW, outH, 1);
+      const resizedMask = await maskRaw.resize(w, h);
       const maskData = resizedMask.data;
-      const step = resizedMask.channels || 1;
 
       const imgData = mCtx.createImageData(w, h);
       const totalPixels = w * h;
       for (let i = 0; i < totalPixels; i++) {
-        const alpha = maskData[i * step];
         const idx = i * 4;
         imgData.data[idx] = 255;
         imgData.data[idx + 1] = 255;
         imgData.data[idx + 2] = 255;
-        imgData.data[idx + 3] = alpha;
+        imgData.data[idx + 3] = maskData[i];
       }
       mCtx.putImageData(imgData, 0, 0);
     }
