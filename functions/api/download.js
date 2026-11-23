@@ -23,6 +23,7 @@ function decodeHtmlEntities(str) {
     .replace(/&amp;/g, "&")
     .replace(/&#x26;/g, "&")
     .replace(/&#38;/g, "&")
+    .replace(/&#x2F;/gi, "/")
     .replace(/&quot;/g, '"');
 }
 
@@ -47,7 +48,7 @@ async function fetchFacebookDirect(fullUrl) {
     redirect: "follow",
     headers: {
       "User-Agent":
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
       "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       "Accept-Language": "en-US,en;q=0.9",
       "Sec-Fetch-Mode": "navigate",
@@ -87,6 +88,108 @@ async function fetchFacebookDirect(fullUrl) {
   return { title, cover, links };
 }
 
+async function fetchInstagramDirect(parsedUrl) {
+  const pathMatch = parsedUrl.pathname.match(/\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  if (!pathMatch) return null;
+
+  const kind = pathMatch[1].toLowerCase() === "p" ? "p" : "reel";
+  const shortcode = pathMatch[2];
+
+  const candidateUrls = [
+    `https://www.instagram.com/${kind}/${shortcode}/embed/captioned/`,
+    `https://www.instagram.com/${kind}/${shortcode}/embed/`,
+    `https://www.instagram.com/${kind}/${shortcode}/`,
+  ];
+
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.instagram.com/",
+  };
+
+  for (const target of candidateUrls) {
+    try {
+      const res = await fetch(target, { redirect: "follow", headers });
+      if (!res.ok) continue;
+      const html = await res.text();
+
+      const links = [];
+      const seen = new Set();
+
+      const addVideoUrl = (raw) => {
+        if (!raw) return;
+        const clean = decodeHtmlEntities(decodeJsonString(raw));
+        if (clean.startsWith("https://") && !seen.has(clean)) {
+          seen.add(clean);
+          links.push({
+            label: links.length === 0 ? "Download MP4 HD" : `Download MP4 (Alternatif ${links.length + 1})`,
+            url: clean,
+            quality: links.length === 0 ? "hd" : "sd",
+            type: "mp4",
+          });
+        }
+      };
+
+      // 1. Cari video_url di payload JSON embed Instagram
+      for (const m of html.matchAll(/"video_url"\s*:\s*"(https:[^"]+)"/g)) {
+        addVideoUrl(m[1]);
+      }
+
+      // 2. Cari tag <video src="..."> atau og:video
+      for (const m of html.matchAll(/<video[^>]+src=["'](https:\/\/[^"']+)["']/gi)) {
+        addVideoUrl(m[1]);
+      }
+      const ogVid = html.match(/<meta[^>]+property=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i);
+      if (ogVid) addVideoUrl(ogVid[1]);
+
+      // 3. Ambil thumbnail / foto postingan jika berupa foto
+      const ogImg = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
+      const displayMatch = html.match(/"display_url"\s*:\s*"(https:[^"]+)"/);
+      const cover = ogImg
+        ? decodeHtmlEntities(ogImg[1])
+        : displayMatch
+        ? decodeHtmlEntities(decodeJsonString(displayMatch[1]))
+        : "";
+
+      const userMatch = html.match(/"username"\s*:\s*"([^"]+)"/) || html.match(/class="UsernameText"[^>]*>([^<]+)</i);
+      const authorName = userMatch ? decodeHtmlEntities(userMatch[1]).trim() : "Instagram Creator";
+
+      const capMatch =
+        html.match(/class="Caption"[^>]*>([\s\S]*?)<\/div>/i) ||
+        html.match(/<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+      const title = capMatch
+        ? decodeHtmlEntities(capMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).trim().slice(0, 180)
+        : "Instagram Media";
+
+      if (links.length > 0) {
+        return {
+          title: title || "Instagram Video",
+          cover,
+          author: { name: authorName, username: authorName.startsWith("@") ? authorName : `@${authorName}` },
+          links,
+        };
+      }
+
+      // Jika postingan berupa foto tunggal (bukan video)
+      if (cover && cover.startsWith("https://")) {
+        return {
+          title: title || "Instagram Photo",
+          cover,
+          author: { name: authorName, username: authorName.startsWith("@") ? authorName : `@${authorName}` },
+          slides: [{ index: 1, url: cover, liveVideoUrl: "", isLive: false }],
+          links: [],
+        };
+      }
+    } catch {
+      // Lanjut ke kandidat URL berikutnya
+    }
+  }
+
+  return null;
+}
+
 export async function onRequestPost(context) {
   const { request, env } = context;
 
@@ -109,52 +212,55 @@ export async function onRequestPost(context) {
     let result = null;
     let upstreamError = "";
 
+    // 1. Coba ekstraktor utama (Vercel)
     if (endpoint) {
-      const headers = {
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-      };
-      if (apiKey) {
-        headers["Authorization"] = `Api-Key ${apiKey}`;
-      }
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ url: fullUrl }),
-      });
-
-      const rawText = await res.text();
-      let json = null;
       try {
-        json = JSON.parse(rawText);
-      } catch {
-        json = null;
-      }
-
-      if (res.status === 502 && !json) {
-        return Response.json({
-          ok: false,
-          directFallback: { endpoint, apiKey, url: fullUrl },
-        });
-      }
-
-      if (res.ok && json) {
-        const links = Array.isArray(json.links)
-          ? json.links.filter((l) => l?.url?.startsWith("https://"))
-          : [];
-        if (links.length) {
-          result = {
-            title: (json.title || "7D Media Download").replace(/\.[a-z0-9]+$/i, ""),
-            cover: json.cover || "",
-            duration: json.duration ? formatDuration(json.duration) : "",
-            author: typeof json.author === "string" ? { name: json.author } : json.author || null,
-            links,
-          };
+        const headers = {
+          "Accept": "application/json",
+          "Content-Type": "application/json",
+        };
+        if (apiKey) {
+          headers["Authorization"] = `Api-Key ${apiKey}`;
         }
-      } else if (json?.detail) {
-        upstreamError = ` (${json.detail})`;
+
+        const res = await fetch(endpoint, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ url: fullUrl }),
+        });
+
+        const rawText = await res.text();
+        let json = null;
+        try {
+          json = JSON.parse(rawText);
+        } catch {
+          json = null;
+        }
+
+        if (res.ok && json) {
+          const links = Array.isArray(json.links)
+            ? json.links.filter((l) => l?.url?.startsWith("https://"))
+            : [];
+          if (links.length) {
+            result = {
+              title: (json.title || "7D Media Download").replace(/\.[a-z0-9]+$/i, ""),
+              cover: json.cover || "",
+              duration: json.duration ? formatDuration(json.duration) : "",
+              author: typeof json.author === "string" ? { name: json.author } : json.author || null,
+              links,
+            };
+          }
+        } else if (json?.detail) {
+          upstreamError = ` (${String(json.detail).replace(/^YouTube:\s*/i, "")})`;
+        }
+      } catch {
+        // Lanjut ke jalur cadangan langsung
       }
+    }
+
+    // 2. Jalur cadangan langsung dari Cloudflare Edge untuk Instagram & Facebook
+    if (!result && host.includes("instagram.com")) {
+      result = await fetchInstagramDirect(parsed);
     }
 
     if (!result && (host.includes("facebook.com") || host === "fb.watch")) {
