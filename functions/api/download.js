@@ -92,7 +92,9 @@ async function fetchInstagramDirect(parsedUrl) {
   const pathMatch = parsedUrl.pathname.match(/\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
   if (!pathMatch) return null;
 
-  const kind = pathMatch[1].toLowerCase() === "p" ? "p" : "reel";
+  const rawType = pathMatch[1].toLowerCase();
+  const isExplicitReel = rawType === "reel" || rawType === "reels" || rawType === "tv";
+  const kind = rawType === "p" ? "p" : "reel";
   const shortcode = pathMatch[2];
 
   const candidateUrls = [
@@ -116,13 +118,13 @@ async function fetchInstagramDirect(parsedUrl) {
       const html = await res.text();
 
       const links = [];
-      const seen = new Set();
+      const seenVideos = new Set();
 
       const addVideoUrl = (raw) => {
         if (!raw) return;
         const clean = decodeHtmlEntities(decodeJsonString(raw));
-        if (clean.startsWith("https://") && !seen.has(clean)) {
-          seen.add(clean);
+        if (clean.startsWith("https://") && !seenVideos.has(clean)) {
+          seenVideos.add(clean);
           links.push({
             label: links.length === 0 ? "Download MP4 HD" : `Download MP4 (Alternatif ${links.length + 1})`,
             url: clean,
@@ -132,28 +134,21 @@ async function fetchInstagramDirect(parsedUrl) {
         }
       };
 
-      // 1. Cari video_url di payload JSON embed Instagram
       for (const m of html.matchAll(/"video_url"\s*:\s*"(https:[^"]+)"/g)) {
         addVideoUrl(m[1]);
       }
-
-      // 2. Cari tag <video src="..."> atau og:video
       for (const m of html.matchAll(/<video[^>]+src=["'](https:\/\/[^"']+)["']/gi)) {
         addVideoUrl(m[1]);
       }
       const ogVid = html.match(/<meta[^>]+property=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i);
       if (ogVid) addVideoUrl(ogVid[1]);
 
-      // 3. Ambil thumbnail / foto postingan jika berupa foto
       const ogImg = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-      const displayMatch = html.match(/"display_url"\s*:\s*"(https:[^"]+)"/);
-      const cover = ogImg
-        ? decodeHtmlEntities(ogImg[1])
-        : displayMatch
-        ? decodeHtmlEntities(decodeJsonString(displayMatch[1]))
-        : "";
+      const cover = ogImg ? decodeHtmlEntities(ogImg[1]) : "";
 
-      const userMatch = html.match(/"username"\s*:\s*"([^"]+)"/) || html.match(/class="UsernameText"[^>]*>([^<]+)</i);
+      const userMatch =
+        html.match(/"username"\s*:\s*"([^"]+)"/) ||
+        html.match(/class="UsernameText"[^>]*>([^<]+)</i);
       const authorName = userMatch ? decodeHtmlEntities(userMatch[1]).trim() : "Instagram Creator";
 
       const capMatch =
@@ -163,6 +158,7 @@ async function fetchInstagramDirect(parsedUrl) {
         ? decodeHtmlEntities(capMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).trim().slice(0, 180)
         : "Instagram Media";
 
+      // Jika ditemukan video MP4
       if (links.length > 0) {
         return {
           title: title || "Instagram Video",
@@ -172,13 +168,49 @@ async function fetchInstagramDirect(parsedUrl) {
         };
       }
 
-      // Jika postingan berupa foto tunggal (bukan video)
-      if (cover && cover.startsWith("https://")) {
+      // Jika tautan explicitly adalah /reel/ atau /reels/ dan video tidak ditemukan, JANGAN fallback ke cover foto
+      if (isExplicitReel) {
+        continue;
+      }
+
+      // Untuk tautan /p/ (postingan foto tunggal atau carousel multi-slide)
+      const slideUrls = [];
+      const seenImages = new Set();
+      const addImageSlide = (raw) => {
+        if (!raw) return;
+        const clean = decodeHtmlEntities(decodeJsonString(raw));
+        if (
+          clean.startsWith("https://") &&
+          !seenImages.has(clean) &&
+          !/s150x150|s320x320|profile_pic/i.test(clean)
+        ) {
+          seenImages.add(clean);
+          slideUrls.push(clean);
+        }
+      };
+
+      for (const m of html.matchAll(/"display_url"\s*:\s*"(https:[^"]+)"/g)) {
+        addImageSlide(m[1]);
+      }
+      for (const m of html.matchAll(/<img[^>]+class="EmbeddedMediaImage"[^>]+src=["'](https:\/\/[^"']+)["']/gi)) {
+        addImageSlide(m[1]);
+      }
+      if (!slideUrls.length && cover) {
+        addImageSlide(cover);
+      }
+
+      if (slideUrls.length > 0) {
+        const slides = slideUrls.map((u, idx) => ({
+          index: idx + 1,
+          url: u,
+          liveVideoUrl: "",
+          isLive: false,
+        }));
         return {
-          title: title || "Instagram Photo",
-          cover,
+          title: title || "Instagram Photo Post",
+          cover: "",
           author: { name: authorName, username: authorName.startsWith("@") ? authorName : `@${authorName}` },
-          slides: [{ index: 1, url: cover, liveVideoUrl: "", isLive: false }],
+          slides,
           links: [],
         };
       }

@@ -1,7 +1,19 @@
 import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
 
 let pendingHdUrl = null;
+let hdCountdownTimer = null;
+let hdReadyToDownload = false;
 let jsZipMod = null;
+
+// Anti-spam rate limiter state
+let downloadCountWindow = 0;
+let cooldownUntil = 0;
+let cooldownInterval = null;
+
+// Pulihkan URL jika browser sempat nyangkut di /null
+if (typeof window !== "undefined" && window.location.pathname === "/null") {
+  window.history.replaceState(null, "", "/");
+}
 
 async function getJSZip() {
   if (jsZipMod) return jsZipMod;
@@ -21,8 +33,8 @@ function sanitizeDownloaderError(rawMsg, targetUrl) {
   const cleaned = msg.replace(/^YouTube:\s*/i, "").trim();
 
   if (lowerUrl.includes("instagram.com")) {
-    if (/tidak tersedia|unavailable|private|login|rate|429|403/i.test(cleaned)) {
-      return "Instagram: Video tidak tersedia, akun privat, atau sedang dibatasi sementara. Coba lagi beberapa saat.";
+    if (/tidak tersedia|unavailable|private|login|rate|429|403|tidak dapat diambil/i.test(cleaned)) {
+      return "Instagram: Media tidak dapat diambil (postingan privat atau sedang dibatasi sementara oleh Instagram).";
     }
     return cleaned ? `Instagram: ${cleaned}` : "Instagram: Gagal mengambil media. Pastikan postingan bersifat publik.";
   }
@@ -69,7 +81,13 @@ async function triggerDirectFileDownload(url, fallbackFilename) {
     a.remove();
     setTimeout(() => URL.revokeObjectURL(objUrl), 5000);
   } catch {
-    window.open(url, "_blank", "noopener,noreferrer");
+    const a = document.createElement("a");
+    a.href = url;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 }
 
@@ -105,14 +123,7 @@ async function fetchTikTokClientSide(cleanUrl) {
     const links = [];
 
     if (slides.length > 0) {
-      if (d.play?.startsWith("https://")) {
-        links.push({
-          label: "Download as video (MP4 Slideshow)",
-          url: d.play,
-          quality: "sd",
-          type: "mp4",
-        });
-      }
+      // Pada Photo Slideshow TikTok, d.play adalah audio MP3, sehingga hanya tampilkan MP3 Audio Original
       if (d.music?.startsWith("https://")) {
         links.push({
           label: "Download MP3 (Audio Original)",
@@ -185,15 +196,14 @@ export function initDownloaderModule() {
 
   if (!urlInput || !btnRun) return;
 
-  // Sinkronisasi otomatis tombol Paste <-> Hapus
   function syncPasteOrClearButton() {
     if (!btnPaste) return;
     const hasValue = urlInput.value.trim().length > 0;
     if (hasValue) {
       btnPaste.textContent = "Hapus";
-      btnPaste.style.background = "rgba(239, 68, 68, 0.16)";
+      btnPaste.style.background = "rgba(239, 68, 68, 0.18)";
       btnPaste.style.color = "#f87171";
-      btnPaste.style.borderColor = "rgba(239, 68, 68, 0.35)";
+      btnPaste.style.borderColor = "rgba(239, 68, 68, 0.4)";
     } else {
       btnPaste.textContent = "Paste";
       btnPaste.style.background = "";
@@ -202,13 +212,45 @@ export function initDownloaderModule() {
     }
   }
 
+  function startAntiSpamCooldown(seconds, isPenalty15s) {
+    cooldownUntil = Date.now() + seconds * 1000;
+    if (cooldownInterval) clearInterval(cooldownInterval);
+
+    const updateBtn = () => {
+      const rem = Math.ceil((cooldownUntil - Date.now()) / 1000);
+      if (rem > 0) {
+        btnRun.disabled = true;
+        btnRun.textContent = isPenalty15s
+          ? `Batas 3x tercapai — Tunggu ${rem} detik...`
+          : `Tunggu ${rem} detik...`;
+      } else {
+        clearInterval(cooldownInterval);
+        cooldownInterval = null;
+        if (isPenalty15s) {
+          downloadCountWindow = 0;
+        }
+        btnRun.disabled = false;
+        btnRun.textContent = "Download";
+      }
+    };
+
+    updateBtn();
+    cooldownInterval = setInterval(updateBtn, 500);
+  }
+
   urlInput.addEventListener("input", syncPasteOrClearButton);
+  urlInput.addEventListener("change", syncPasteOrClearButton);
   syncPasteOrClearButton();
 
-  btnPaste?.addEventListener("click", async () => {
+  btnPaste?.addEventListener("click", async (e) => {
+    e.preventDefault();
     if (urlInput.value.trim().length > 0) {
       urlInput.value = "";
-      resultBox?.classList.add("hidden");
+      urlInput.setAttribute("value", "");
+      if (resultBox) {
+        resultBox.innerHTML = "";
+        resultBox.classList.add("hidden");
+      }
       syncPasteOrClearButton();
       urlInput.focus();
       return;
@@ -225,32 +267,54 @@ export function initDownloaderModule() {
     }
   });
 
-  btnCloseHd?.addEventListener("click", () => {
+  function resetHdModalState() {
+    if (hdCountdownTimer) {
+      clearInterval(hdCountdownTimer);
+      hdCountdownTimer = null;
+    }
+    hdReadyToDownload = false;
     pendingHdUrl = null;
+    if (btnTriggerHd) {
+      btnTriggerHd.disabled = false;
+      btnTriggerHd.textContent = "Tonton Iklan & Buka HD";
+    }
+  }
+
+  btnCloseHd?.addEventListener("click", () => {
+    resetHdModalState();
     hdModal?.classList.add("hidden");
   });
 
-  btnTriggerHd?.addEventListener("click", () => {
+  btnTriggerHd?.addEventListener("click", async () => {
     if (!pendingHdUrl) return;
+
+    // Jika hitung mundur 15 detik sudah selesai, klik tombol ini langsung mengunduh file HD (aman dari blokir pop-up Chrome HP)
+    if (hdReadyToDownload) {
+      const targetUrl = pendingHdUrl;
+      resetHdModalState();
+      hdModal?.classList.add("hidden");
+      await triggerDirectFileDownload(targetUrl, `7d-video-hd-${Date.now()}.mp4`);
+      return;
+    }
+
     if (typeof window.trigger7DAdSlot5 === "function") {
       window.trigger7DAdSlot5();
     }
 
-    let sec = 5;
+    let sec = 15;
     btnTriggerHd.disabled = true;
-    btnTriggerHd.textContent = `Membuka HD dalam ${sec} detik...`;
+    btnTriggerHd.textContent = `Menyiapkan HD (${sec} detik)...`;
 
-    const timer = setInterval(() => {
+    hdCountdownTimer = setInterval(() => {
       sec -= 1;
       if (sec > 0) {
-        btnTriggerHd.textContent = `Membuka HD dalam ${sec} detik...`;
+        btnTriggerHd.textContent = `Menyiapkan HD (${sec} detik)...`;
       } else {
-        clearInterval(timer);
+        clearInterval(hdCountdownTimer);
+        hdCountdownTimer = null;
+        hdReadyToDownload = true;
         btnTriggerHd.disabled = false;
-        btnTriggerHd.textContent = "Tonton Iklan & Buka HD";
-        hdModal?.classList.add("hidden");
-        window.open(pendingHdUrl, "_blank", "noopener,noreferrer");
-        pendingHdUrl = null;
+        btnTriggerHd.textContent = "Unduh MP4 HD Sekarang";
       }
     }, 1000);
   });
@@ -387,7 +451,7 @@ export function initDownloaderModule() {
           const zipUrl = URL.createObjectURL(zipBlob);
           const a = document.createElement("a");
           a.href = zipUrl;
-          a.download = `7d-tiktok-slides-${Date.now()}.zip`;
+          a.download = `7d-slides-${Date.now()}.zip`;
           document.body.appendChild(a);
           a.click();
           a.remove();
@@ -415,16 +479,18 @@ export function initDownloaderModule() {
       btn.style.padding = "12px";
       btn.textContent = item.label;
 
-      btn.addEventListener("click", () => {
+      btn.addEventListener("click", async () => {
         if (!guardActionAgainstAdblock()) return;
         if (item.quality === "hd") {
+          resetHdModalState();
           pendingHdUrl = item.url;
           hdModal?.classList.remove("hidden");
         } else {
           if (typeof window.trigger7DAdSlot5 === "function") {
             window.trigger7DAdSlot5();
           }
-          window.open(item.url, "_blank", "noopener,noreferrer");
+          const ext = item.type === "mp3" ? "mp3" : "mp4";
+          await triggerDirectFileDownload(item.url, `7d-media-${Date.now()}.${ext}`);
         }
       });
 
@@ -528,6 +594,11 @@ export function initDownloaderModule() {
   btnRun.addEventListener("click", async () => {
     if (!guardActionAgainstAdblock()) return;
 
+    // Cek apakah masih dalam masa jeda anti-spam
+    if (Date.now() < cooldownUntil) {
+      return;
+    }
+
     const cleanUrl = extractFirstHttpsUrl(urlInput.value);
     if (!cleanUrl) {
       return alert("Tempel tautan video/foto yang valid (https://...) terlebih dahulu.");
@@ -535,7 +606,6 @@ export function initDownloaderModule() {
     urlInput.value = cleanUrl;
     syncPasteOrClearButton();
 
-    const oldLabel = btnRun.textContent;
     btnRun.disabled = true;
     btnRun.textContent = "Memproses tautan...";
     resultBox.classList.add("hidden");
@@ -578,8 +648,14 @@ export function initDownloaderModule() {
     } catch (err) {
       alert(sanitizeDownloaderError(err.message, cleanUrl));
     } finally {
-      btnRun.disabled = false;
-      btnRun.textContent = oldLabel;
+      downloadCountWindow += 1;
+      if (downloadCountWindow > 3) {
+        // Lebih dari 3x download -> jeda 15 detik
+        startAntiSpamCooldown(15, true);
+      } else {
+        // Jeda standar 10 detik antar download
+        startAntiSpamCooldown(10, false);
+      }
     }
   });
 }
