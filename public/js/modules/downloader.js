@@ -1,4 +1,4 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=7";
+import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=8";
 
 let pendingHdUrl = null;
 let hdCountdownTimer = null;
@@ -240,6 +240,7 @@ async function fetchTikTokClientSide(cleanUrl) {
         comments: formatCompactNumber(d.comment_count),
         shares: formatCompactNumber(d.share_count),
       },
+      isTikTokSlideshow: slides.length > 0,
       slides,
       links,
     };
@@ -564,7 +565,8 @@ export function initDownloaderModule() {
 
       listWrap.appendChild(btnZip);
 
-      // 2. Download as video (Render seluruh slide menjadi file video asli)
+      // 2. Download as video (Khusus TikTok Photo Slideshow, tidak untuk Instagram Foto)
+      if (data.isTikTokSlideshow) {
       const btnSlidesVideo = document.createElement("button");
       btnSlidesVideo.type = "button";
       btnSlidesVideo.className = "btn-ghost-sm full";
@@ -600,6 +602,7 @@ export function initDownloaderModule() {
       });
 
       listWrap.appendChild(btnSlidesVideo);
+      }
     }
 
     (data.links || []).forEach((item) => {
@@ -675,6 +678,7 @@ export function initDownloaderModule() {
           thumbBox.appendChild(posterPlaceholder);
         } else {
           const img = document.createElement("img");
+          img.referrerPolicy = "no-referrer";
           img.src = slide.url;
           img.alt = `Slide ${slide.index}`;
           img.loading = "lazy";

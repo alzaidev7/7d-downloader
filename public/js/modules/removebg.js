@@ -1,4 +1,4 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=7";
+import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=8";
 
 let _7dRmbgWorker = null;
 let _7dReqSeq = 0;

@@ -1,4 +1,4 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=7";
+import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=8";
 
 
 export function initBratModule() {

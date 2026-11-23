@@ -97,6 +97,79 @@ function resolveProxyUrl(rawUrl, baseOrigin) {
   return "";
 }
 
+async function fetchInstagramEmbedCarousel(shortcode) {
+  const embedUrls = [
+    `https://www.instagram.com/p/${shortcode}/embed/captioned/`,
+    `https://www.instagram.com/p/${shortcode}/embed/`,
+  ];
+
+  const headers = {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.instagram.com/",
+  };
+
+  for (const target of embedUrls) {
+    try {
+      const res = await fetch(target, { redirect: "follow", headers });
+      if (!res.ok) continue;
+      const html = await res.text();
+
+      const slideUrls = [];
+      const seen = new Set();
+      const addSlide = (raw) => {
+        if (!raw) return;
+        const clean = decodeHtmlEntities(decodeJsonString(raw));
+        if (
+          clean.startsWith("https://") &&
+          !seen.has(clean) &&
+          !/s150x150|s320x320|profile_pic|static\.cdninstagram\.com/i.test(clean)
+        ) {
+          seen.add(clean);
+          slideUrls.push(clean);
+        }
+      };
+
+      for (const m of html.matchAll(/"display_url"\s*:\s*"(https:[^"]+)"/g)) {
+        addSlide(m[1]);
+      }
+      for (const m of html.matchAll(/<img[^>]+class="EmbeddedMediaImage"[^>]+src=["'](https:\/\/[^"']+)["']/gi)) {
+        addSlide(m[1]);
+      }
+
+      if (slideUrls.length > 0) {
+        const userMatch = html.match(/class="UsernameText"[^>]*>([^<]+)</i);
+        const authorName = userMatch ? decodeHtmlEntities(userMatch[1]).trim() : "Instagram Creator";
+        const capMatch = html.match(/class="Caption"[^>]*>([\s\S]*?)<\/div>/i);
+        const title = capMatch
+          ? decodeHtmlEntities(capMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).trim().slice(0, 180)
+          : "Instagram Photo Post";
+
+        return {
+          title: title || "Instagram Photo Post",
+          cover: "",
+          author: {
+            name: authorName,
+            username: authorName.startsWith("@") ? authorName : `@${authorName}`,
+          },
+          slides: slideUrls.map((u, idx) => ({
+            index: idx + 1,
+            url: u,
+            liveVideoUrl: "",
+            isLive: false,
+          })),
+          links: [],
+        };
+      }
+    } catch {
+      // Lanjut
+    }
+  }
+  return null;
+}
+
 async function fetchInstagramViaInstaFix(shortcode, kind) {
   const hosts = [
     "https://www.ddinstagram.com",
@@ -121,12 +194,28 @@ async function fetchInstagramViaInstaFix(shortcode, kind) {
       const ogVidMatch =
         html.match(/<meta[^>]+property=["']og:video(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i) ||
         html.match(/<meta[^>]+name=["']twitter:player:stream["'][^>]+content=["']([^"']+)["']/i);
-      const videoUrl = ogVidMatch ? resolveProxyUrl(ogVidMatch[1], base) : "";
+      const rawVideoUrl = ogVidMatch ? resolveProxyUrl(ogVidMatch[1], base) : "";
+      // Abaikan URL /grid/ karena itu adalah thumbnail grid untuk postingan foto carousel, bukan video
+      const isRealVideo = rawVideoUrl && !/\/grid\//i.test(rawVideoUrl);
 
-      const ogImgMatches = [...html.matchAll(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/gi)];
-      const imageUrls = ogImgMatches
-        .map((m) => resolveProxyUrl(m[1], base))
-        .filter((u) => u && !/favicon|logo|banner/i.test(u));
+      const ogImgMatches = [
+        ...html.matchAll(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/gi),
+      ];
+      const imageUrls = [
+        ...new Set(
+          ogImgMatches
+            .map((m) => resolveProxyUrl(m[1], base))
+            .filter((u) => u && !/favicon|logo|banner|\/grid\//i.test(u))
+        ),
+      ];
+
+      // Cek juga apakah proxy menautkan slide gambar langsung (/images/shortcode/1, /2, dst)
+      for (const m of html.matchAll(/["'](\/images\/[^"']+)["']/gi)) {
+        const resolved = resolveProxyUrl(m[1], base);
+        if (resolved && !imageUrls.includes(resolved)) {
+          imageUrls.push(resolved);
+        }
+      }
 
       const titleMatch =
         html.match(/<meta[^>]+property=["']og:description["'][^>]+content=["']([^"']+)["']/i) ||
@@ -138,8 +227,8 @@ async function fetchInstagramViaInstaFix(shortcode, kind) {
       const authorUser = authorRaw.startsWith("@") ? authorRaw : `@${authorName}`;
       const title = titleMatch ? decodeHtmlEntities(titleMatch[1]).trim().slice(0, 180) : "Instagram Media";
 
-      // 1. Video / Reels
-      if (videoUrl) {
+      // 1. Jika benar-benar video / Reels
+      if (isRealVideo) {
         return {
           title: title || "Instagram Video",
           cover: imageUrls[0] || "",
@@ -147,7 +236,7 @@ async function fetchInstagramViaInstaFix(shortcode, kind) {
           links: [
             {
               label: "Download MP4 HD",
-              url: videoUrl,
+              url: rawVideoUrl,
               quality: "hd",
               type: "mp4",
             },
@@ -155,22 +244,32 @@ async function fetchInstagramViaInstaFix(shortcode, kind) {
         };
       }
 
-      // 2. Postingan Foto / Carousel (untuk /p/)
-      if (kind === "p" && imageUrls.length > 0) {
-        const uniqueImgs = [...new Set(imageUrls)];
-        const slides = uniqueImgs.map((u, idx) => ({
-          index: idx + 1,
-          url: u,
-          liveVideoUrl: "",
-          isLive: false,
-        }));
-        return {
-          title: title || "Instagram Photo Post",
-          cover: "",
-          author: { name: authorName, username: authorUser },
-          slides,
-          links: [],
-        };
+      // 2. Jika postingan foto / carousel (/p/)
+      if (kind === "p") {
+        // Coba ambil seluruh slide dari embed Instagram terlebih dahulu agar carousel lengkap
+        const embedCarousel = await fetchInstagramEmbedCarousel(shortcode);
+        if (embedCarousel && embedCarousel.slides.length >= imageUrls.length) {
+          return {
+            ...embedCarousel,
+            title: title || embedCarousel.title,
+            author: { name: authorName, username: authorUser },
+          };
+        }
+
+        if (imageUrls.length > 0) {
+          return {
+            title: title || "Instagram Photo Post",
+            cover: "",
+            author: { name: authorName, username: authorUser },
+            slides: imageUrls.map((u, idx) => ({
+              index: idx + 1,
+              url: u,
+              liveVideoUrl: "",
+              isLive: false,
+            })),
+            links: [],
+          };
+        }
       }
     } catch {
       // Coba host berikutnya
@@ -185,95 +284,15 @@ async function fetchInstagramDirect(parsedUrl) {
   if (!pathMatch) return null;
 
   const rawType = pathMatch[1].toLowerCase();
-  const isExplicitReel = rawType === "reel" || rawType === "reels" || rawType === "tv";
   const kind = rawType === "p" ? "p" : "reel";
   const shortcode = pathMatch[2];
 
-  // Jalur 1: InstaFix Proxy (lolos blokir IP datacenter Instagram)
   const proxyResult = await fetchInstagramViaInstaFix(shortcode, kind);
   if (proxyResult) return proxyResult;
 
-  // Jalur 2: Halaman Embed Publik Instagram
-  const candidateUrls = [
-    `https://www.instagram.com/${kind}/${shortcode}/embed/captioned/`,
-    `https://www.instagram.com/${kind}/${shortcode}/embed/`,
-  ];
-
-  const headers = {
-    "User-Agent":
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Referer": "https://www.instagram.com/",
-  };
-
-  for (const target of candidateUrls) {
-    try {
-      const res = await fetch(target, { redirect: "follow", headers });
-      if (!res.ok) continue;
-      const html = await res.text();
-
-      const links = [];
-      const seenVideos = new Set();
-
-      const addVideoUrl = (raw) => {
-        if (!raw) return;
-        const clean = decodeHtmlEntities(decodeJsonString(raw));
-        if (clean.startsWith("https://") && !seenVideos.has(clean)) {
-          seenVideos.add(clean);
-          links.push({
-            label: links.length === 0 ? "Download MP4 HD" : `Download MP4 (Alternatif ${links.length + 1})`,
-            url: clean,
-            quality: links.length === 0 ? "hd" : "sd",
-            type: "mp4",
-          });
-        }
-      };
-
-      for (const m of html.matchAll(/"video_url"\s*:\s*"(https:[^"]+)"/g)) {
-        addVideoUrl(m[1]);
-      }
-      for (const m of html.matchAll(/<video[^>]+src=["'](https:\/\/[^"']+)["']/gi)) {
-        addVideoUrl(m[1]);
-      }
-
-      const ogImg = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i);
-      const cover = ogImg ? decodeHtmlEntities(ogImg[1]) : "";
-
-      if (links.length > 0) {
-        return {
-          title: "Instagram Video",
-          cover,
-          author: { name: "Instagram Creator", username: "@instagram" },
-          links,
-        };
-      }
-
-      if (isExplicitReel) continue;
-
-      const slideUrls = [];
-      const seenImages = new Set();
-      for (const m of html.matchAll(/"display_url"\s*:\s*"(https:[^"]+)"/g)) {
-        const clean = decodeHtmlEntities(decodeJsonString(m[1]));
-        if (clean.startsWith("https://") && !seenImages.has(clean) && !/s150x150|s320x320|profile_pic/i.test(clean)) {
-          seenImages.add(clean);
-          slideUrls.push(clean);
-        }
-      }
-      if (!slideUrls.length && cover) slideUrls.push(cover);
-
-      if (slideUrls.length > 0) {
-        return {
-          title: "Instagram Photo Post",
-          cover: "",
-          author: { name: "Instagram Creator", username: "@instagram" },
-          slides: slideUrls.map((u, idx) => ({ index: idx + 1, url: u, liveVideoUrl: "", isLive: false })),
-          links: [],
-        };
-      }
-    } catch {
-      // Lanjut ke kandidat berikutnya
-    }
+  if (kind === "p") {
+    const embedResult = await fetchInstagramEmbedCarousel(shortcode);
+    if (embedResult) return embedResult;
   }
 
   return null;
@@ -347,7 +366,7 @@ export async function onRequestPost(context) {
       }
     }
 
-    // 2. Jalur cadangan Instagram (InstaFix Proxy + Embed) & Facebook
+    // 2. Jalur cadangan Instagram & Facebook
     if (!result && host.includes("instagram.com")) {
       result = await fetchInstagramDirect(parsed);
     }
