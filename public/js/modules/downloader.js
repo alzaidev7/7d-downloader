@@ -1,4 +1,4 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=5";
+import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=6";
 
 let pendingHdUrl = null;
 let hdCountdownTimer = null;
