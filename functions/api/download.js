@@ -88,6 +88,103 @@ async function fetchFacebookDirect(fullUrl) {
   return { title, cover, links };
 }
 
+async function fetchInstagramGraphQL(shortcode) {
+  try {
+    const variables = JSON.stringify({
+      shortcode,
+      child_comment_count: 0,
+      fetch_comment_count: 0,
+      parent_comment_count: 0,
+      has_threaded_comments: false,
+    });
+    const gqlUrl = `https://www.instagram.com/graphql/query/?query_hash=b3055c01b4b222b8a47dc12b090e0e64&variables=${encodeURIComponent(variables)}`;
+
+    const res = await fetch(gqlUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        "Accept": "application/json",
+        "X-IG-App-ID": "936619743392459",
+        "Referer": `https://www.instagram.com/p/${shortcode}/`,
+      },
+    });
+
+    if (!res.ok) return null;
+    const json = await res.json();
+    const media = json?.data?.shortcode_media;
+    if (!media) return null;
+
+    const ownerName = media.owner?.full_name || media.owner?.username || "Instagram Creator";
+    const ownerUser = media.owner?.username ? `@${media.owner.username}` : "";
+    const ownerAvatar = media.owner?.profile_pic_url || "";
+    const captionEdges = media.edge_media_to_caption?.edges || [];
+    const title = captionEdges[0]?.node?.text || "Instagram Media";
+
+    // 1. Jika Video / Reels tunggal
+    if (media.is_video && media.video_url?.startsWith("https://")) {
+      return {
+        title: title.slice(0, 180),
+        cover: media.display_url || "",
+        duration: media.video_duration ? formatDuration(media.video_duration) : "",
+        author: { name: ownerName, username: ownerUser, avatar: ownerAvatar },
+        links: [
+          {
+            label: "Download MP4 HD",
+            url: media.video_url,
+            quality: "hd",
+            type: "mp4",
+          },
+        ],
+      };
+    }
+
+    // 2. Jika Carousel (banyak slide foto/video)
+    const sidecarEdges = media.edge_sidecar_to_children?.edges || [];
+    if (sidecarEdges.length > 0) {
+      const slides = sidecarEdges
+        .map((edge, idx) => {
+          const node = edge?.node;
+          if (!node) return null;
+          const imgUrl = node.display_url || "";
+          const vidUrl = node.is_video && node.video_url?.startsWith("https://") ? node.video_url : "";
+          if (!imgUrl && !vidUrl) return null;
+          return {
+            index: idx + 1,
+            url: imgUrl || vidUrl,
+            liveVideoUrl: vidUrl,
+            isLive: Boolean(vidUrl),
+          };
+        })
+        .filter(Boolean);
+
+      if (slides.length > 0) {
+        return {
+          title: title.slice(0, 180),
+          cover: "",
+          author: { name: ownerName, username: ownerUser, avatar: ownerAvatar },
+          slides,
+          links: [],
+        };
+      }
+    }
+
+    // 3. Jika Foto tunggal
+    if (media.display_url?.startsWith("https://")) {
+      return {
+        title: title.slice(0, 180),
+        cover: "",
+        author: { name: ownerName, username: ownerUser, avatar: ownerAvatar },
+        slides: [{ index: 1, url: media.display_url, liveVideoUrl: "", isLive: false }],
+        links: [],
+      };
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 async function fetchInstagramDirect(parsedUrl) {
   const pathMatch = parsedUrl.pathname.match(/\/(p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
   if (!pathMatch) return null;
@@ -97,6 +194,11 @@ async function fetchInstagramDirect(parsedUrl) {
   const kind = rawType === "p" ? "p" : "reel";
   const shortcode = pathMatch[2];
 
+  // Coba jalur GraphQL shortcode_media terlebih dahulu (paling akurat untuk Reels & Carousel)
+  const gqlResult = await fetchInstagramGraphQL(shortcode);
+  if (gqlResult) return gqlResult;
+
+  // Cadangan parsing halaman Embed & Web Publik
   const candidateUrls = [
     `https://www.instagram.com/${kind}/${shortcode}/embed/captioned/`,
     `https://www.instagram.com/${kind}/${shortcode}/embed/`,
@@ -105,7 +207,7 @@ async function fetchInstagramDirect(parsedUrl) {
 
   const headers = {
     "User-Agent":
-      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1",
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.instagram.com/",
@@ -137,6 +239,12 @@ async function fetchInstagramDirect(parsedUrl) {
       for (const m of html.matchAll(/"video_url"\s*:\s*"(https:[^"]+)"/g)) {
         addVideoUrl(m[1]);
       }
+      for (const m of html.matchAll(/"contentUrl"\s*:\s*"(https:[^"]+\.mp4[^"]*)"/gi)) {
+        addVideoUrl(m[1]);
+      }
+      for (const m of html.matchAll(/data-video-url=["'](https:\/\/[^"']+)["']/gi)) {
+        addVideoUrl(m[1]);
+      }
       for (const m of html.matchAll(/<video[^>]+src=["'](https:\/\/[^"']+)["']/gi)) {
         addVideoUrl(m[1]);
       }
@@ -158,7 +266,6 @@ async function fetchInstagramDirect(parsedUrl) {
         ? decodeHtmlEntities(capMatch[1].replace(/<[^>]+>/g, " ").replace(/\s+/g, " ")).trim().slice(0, 180)
         : "Instagram Media";
 
-      // Jika ditemukan video MP4
       if (links.length > 0) {
         return {
           title: title || "Instagram Video",
@@ -168,12 +275,11 @@ async function fetchInstagramDirect(parsedUrl) {
         };
       }
 
-      // Jika tautan explicitly adalah /reel/ atau /reels/ dan video tidak ditemukan, JANGAN fallback ke cover foto
       if (isExplicitReel) {
         continue;
       }
 
-      // Untuk tautan /p/ (postingan foto tunggal atau carousel multi-slide)
+      // Ekstraksi multi-foto untuk postingan /p/
       const slideUrls = [];
       const seenImages = new Set();
       const addImageSlide = (raw) => {

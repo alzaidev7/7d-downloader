@@ -1,16 +1,15 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=4";
+import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=5";
 
 let pendingHdUrl = null;
 let hdCountdownTimer = null;
 let hdReadyToDownload = false;
 let jsZipMod = null;
 
-// Anti-spam rate limiter state
-let downloadCountWindow = 0;
+// Anti-spam rate limiter (hanya dihitung pada unduhan yang berhasil)
+let successDownloadCount = 0;
 let cooldownUntil = 0;
 let cooldownInterval = null;
 
-// Pulihkan URL jika browser sempat nyangkut di /null
 if (typeof window !== "undefined" && window.location.pathname === "/null") {
   window.history.replaceState(null, "", "/");
 }
@@ -34,7 +33,7 @@ function sanitizeDownloaderError(rawMsg, targetUrl) {
 
   if (lowerUrl.includes("instagram.com")) {
     if (/tidak tersedia|unavailable|private|login|rate|429|403|tidak dapat diambil/i.test(cleaned)) {
-      return "Instagram: Media tidak dapat diambil (postingan privat atau sedang dibatasi sementara oleh Instagram).";
+      return "Instagram: Media tidak dapat diambil (akun privat atau sedang dibatasi sementara oleh Instagram).";
     }
     return cleaned ? `Instagram: ${cleaned}` : "Instagram: Gagal mengambil media. Pastikan postingan bersifat publik.";
   }
@@ -91,6 +90,72 @@ async function triggerDirectFileDownload(url, fallbackFilename) {
   }
 }
 
+// Render kumpulan foto slide menjadi file video slideshow asli di browser
+async function renderSlideshowVideoBlob(slides) {
+  const imageSlides = slides.filter((s) => !isVideoMediaUrl(s.url));
+  if (!imageSlides.length) throw new Error("Tidak ada gambar untuk dirender.");
+
+  const loadedImages = [];
+  for (const s of imageSlides) {
+    const resp = await fetch(s.url);
+    if (!resp.ok) continue;
+    const blob = await resp.blob();
+    const bmp = await createImageBitmap(blob);
+    loadedImages.push(bmp);
+  }
+  if (!loadedImages.length) throw new Error("Gagal memuat gambar slide.");
+
+  const width = 720;
+  const height = 1280;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  const mimeType = MediaRecorder.isTypeSupported("video/mp4")
+    ? "video/mp4"
+    : MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+    ? "video/webm;codecs=vp9"
+    : "video/webm";
+
+  const stream = canvas.captureStream(30);
+  const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 2_500_000 });
+  const chunks = [];
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+
+  const stopped = new Promise((resolve) => {
+    recorder.onstop = resolve;
+  });
+
+  recorder.start();
+
+  const msPerSlide = 2200;
+  for (const img of loadedImages) {
+    const scale = Math.min(width / img.width, height / img.height);
+    const drawW = img.width * scale;
+    const drawH = img.height * scale;
+    const dx = (width - drawW) / 2;
+    const dy = (height - drawH) / 2;
+
+    const frames = Math.ceil((msPerSlide / 1000) * 15);
+    for (let f = 0; f < frames; f++) {
+      ctx.fillStyle = "#09090b";
+      ctx.fillRect(0, 0, width, height);
+      ctx.drawImage(img, dx, dy, drawW, drawH);
+      await new Promise((r) => setTimeout(r, 66));
+    }
+    img.close();
+  }
+
+  recorder.stop();
+  await stopped;
+
+  const ext = mimeType.includes("mp4") ? "mp4" : "webm";
+  return { blob: new Blob(chunks, { type: mimeType }), ext };
+}
+
 async function fetchTikTokClientSide(cleanUrl) {
   try {
     const api = `https://www.tikwm.com/api/?url=${encodeURIComponent(cleanUrl)}&hd=1`;
@@ -123,7 +188,6 @@ async function fetchTikTokClientSide(cleanUrl) {
     const links = [];
 
     if (slides.length > 0) {
-      // Pada Photo Slideshow TikTok, d.play adalah audio MP3, sehingga hanya tampilkan MP3 Audio Original
       if (d.music?.startsWith("https://")) {
         links.push({
           label: "Download MP3 (Audio Original)",
@@ -221,13 +285,13 @@ export function initDownloaderModule() {
       if (rem > 0) {
         btnRun.disabled = true;
         btnRun.textContent = isPenalty15s
-          ? `Batas 3x tercapai — Tunggu ${rem} detik...`
+          ? `Batas 3x unduhan — Tunggu ${rem} detik...`
           : `Tunggu ${rem} detik...`;
       } else {
         clearInterval(cooldownInterval);
         cooldownInterval = null;
         if (isPenalty15s) {
-          downloadCountWindow = 0;
+          successDownloadCount = 0;
         }
         btnRun.disabled = false;
         btnRun.textContent = "Download";
@@ -239,33 +303,39 @@ export function initDownloaderModule() {
   }
 
   urlInput.addEventListener("input", syncPasteOrClearButton);
+  urlInput.addEventListener("keyup", syncPasteOrClearButton);
   urlInput.addEventListener("change", syncPasteOrClearButton);
   syncPasteOrClearButton();
 
-  btnPaste?.addEventListener("click", async (e) => {
-    e.preventDefault();
-    if (urlInput.value.trim().length > 0) {
-      urlInput.value = "";
-      urlInput.setAttribute("value", "");
-      if (resultBox) {
-        resultBox.innerHTML = "";
-        resultBox.classList.add("hidden");
-      }
-      syncPasteOrClearButton();
-      urlInput.focus();
-      return;
-    }
+  if (btnPaste) {
+    btnPaste.onclick = async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
 
-    try {
-      const clip = await navigator.clipboard.readText();
-      const extracted = extractFirstHttpsUrl(clip);
-      urlInput.value = extracted || clip.trim();
-      syncPasteOrClearButton();
-    } catch {
-      urlInput.focus();
-      alert("Izinkan akses clipboard atau tempel tautan secara manual.");
-    }
-  });
+      if (urlInput.value.trim().length > 0) {
+        urlInput.value = "";
+        urlInput.defaultValue = "";
+        urlInput.removeAttribute("value");
+        if (resultBox) {
+          resultBox.innerHTML = "";
+          resultBox.classList.add("hidden");
+        }
+        syncPasteOrClearButton();
+        urlInput.focus();
+        return;
+      }
+
+      try {
+        const clip = await navigator.clipboard.readText();
+        const extracted = extractFirstHttpsUrl(clip);
+        urlInput.value = extracted || clip.trim();
+        syncPasteOrClearButton();
+      } catch {
+        urlInput.focus();
+        alert("Izinkan akses clipboard atau tempel tautan secara manual.");
+      }
+    };
+  }
 
   function resetHdModalState() {
     if (hdCountdownTimer) {
@@ -288,7 +358,6 @@ export function initDownloaderModule() {
   btnTriggerHd?.addEventListener("click", async () => {
     if (!pendingHdUrl) return;
 
-    // Jika hitung mundur 15 detik sudah selesai, klik tombol ini langsung mengunduh file HD (aman dari blokir pop-up Chrome HP)
     if (hdReadyToDownload) {
       const targetUrl = pendingHdUrl;
       resetHdModalState();
@@ -415,6 +484,7 @@ export function initDownloaderModule() {
     listWrap.style.cssText = "display:flex;flex-direction:column;gap:10px;";
 
     if (hasSlides) {
+      // 1. Download all items as ZIP
       const btnZip = document.createElement("button");
       btnZip.type = "button";
       btnZip.className = "btn-emerald full";
@@ -465,6 +535,43 @@ export function initDownloaderModule() {
       });
 
       listWrap.appendChild(btnZip);
+
+      // 2. Download as video (Render seluruh slide menjadi file video asli)
+      const btnSlidesVideo = document.createElement("button");
+      btnSlidesVideo.type = "button";
+      btnSlidesVideo.className = "btn-ghost-sm full";
+      btnSlidesVideo.style.padding = "12px";
+      btnSlidesVideo.textContent = "Download as video (Slideshow)";
+
+      btnSlidesVideo.addEventListener("click", async () => {
+        if (!guardActionAgainstAdblock()) return;
+        if (typeof window.trigger7DAdSlot5 === "function") {
+          window.trigger7DAdSlot5();
+        }
+
+        const origText = btnSlidesVideo.textContent;
+        btnSlidesVideo.disabled = true;
+        btnSlidesVideo.textContent = "Merender video slideshow...";
+
+        try {
+          const { blob, ext } = await renderSlideshowVideoBlob(data.slides);
+          const vidUrl = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = vidUrl;
+          a.download = `7d-slideshow-${Date.now()}.${ext}`;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          setTimeout(() => URL.revokeObjectURL(vidUrl), 6000);
+        } catch {
+          alert("Browser perangkat belum mendukung render video slideshow otomatis. Gunakan tombol ZIP atau unduh slide satu per satu.");
+        } finally {
+          btnSlidesVideo.disabled = false;
+          btnSlidesVideo.textContent = origText;
+        }
+      });
+
+      listWrap.appendChild(btnSlidesVideo);
     }
 
     (data.links || []).forEach((item) => {
@@ -594,7 +701,6 @@ export function initDownloaderModule() {
   btnRun.addEventListener("click", async () => {
     if (!guardActionAgainstAdblock()) return;
 
-    // Cek apakah masih dalam masa jeda anti-spam
     if (Date.now() < cooldownUntil) {
       return;
     }
@@ -609,6 +715,8 @@ export function initDownloaderModule() {
     btnRun.disabled = true;
     btnRun.textContent = "Memproses tautan...";
     resultBox.classList.add("hidden");
+
+    let succeeded = false;
 
     try {
       let data = null;
@@ -645,16 +753,20 @@ export function initDownloaderModule() {
 
       renderDownloadResult(data);
       saveLocalHistory("downloader", data.title || cleanUrl, cleanUrl);
+      succeeded = true;
     } catch (err) {
       alert(sanitizeDownloaderError(err.message, cleanUrl));
     } finally {
-      downloadCountWindow += 1;
-      if (downloadCountWindow > 3) {
-        // Lebih dari 3x download -> jeda 15 detik
-        startAntiSpamCooldown(15, true);
+      if (succeeded) {
+        successDownloadCount += 1;
+        if (successDownloadCount >= 3) {
+          startAntiSpamCooldown(15, true);
+        } else {
+          startAntiSpamCooldown(10, false);
+        }
       } else {
-        // Jeda standar 10 detik antar download
-        startAntiSpamCooldown(10, false);
+        btnRun.disabled = false;
+        btnRun.textContent = "Download";
       }
     }
   });

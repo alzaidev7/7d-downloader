@@ -2,11 +2,11 @@ import {
   initAdSystem,
   guardActionAgainstAdblock,
   refreshAdSlotsOnTabSwitch,
-} from "./adblock.js?v=4";
-import { initDownloaderModule } from "./modules/downloader.js?v=4";
-import { initRemoveBgModule } from "./modules/removebg.js?v=4";
-import { initQrModule } from "./modules/qrstudio.js?v=4";
-import { initBratModule } from "./modules/brat.js?v=4";
+} from "./adblock.js?v=5";
+import { initDownloaderModule } from "./modules/downloader.js?v=5";
+import { initRemoveBgModule } from "./modules/removebg.js?v=5";
+import { initQrModule } from "./modules/qrstudio.js?v=5";
+import { initBratModule } from "./modules/brat.js?v=5";
 
 // 1. Pengalih Tema Dark / Light Mode (Dijalankan Pertama)
 const btnTheme = document.getElementById("btnThemeToggle");
