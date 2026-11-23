@@ -15,6 +15,25 @@ function extractFirstHttpsUrl(text) {
   return match ? match[0] : null;
 }
 
+function sanitizeDownloaderError(rawMsg, targetUrl) {
+  const msg = String(rawMsg || "").trim();
+  const lowerUrl = String(targetUrl || "").toLowerCase();
+  const cleaned = msg.replace(/^YouTube:\s*/i, "").trim();
+
+  if (lowerUrl.includes("instagram.com")) {
+    if (/tidak tersedia|unavailable|private|login|rate|429|403/i.test(cleaned)) {
+      return "Instagram: Video tidak tersedia, akun privat, atau sedang dibatasi sementara. Coba lagi beberapa saat.";
+    }
+    return cleaned ? `Instagram: ${cleaned}` : "Instagram: Gagal mengambil media. Pastikan postingan bersifat publik.";
+  }
+
+  if (lowerUrl.includes("facebook.com") || lowerUrl.includes("fb.watch")) {
+    return cleaned ? `Facebook: ${cleaned}` : "Facebook: Gagal mengambil media. Pastikan video bersifat publik.";
+  }
+
+  return cleaned || "Gagal memproses tautan. Pastikan postingan bersifat publik.";
+}
+
 function formatCompactNumber(num) {
   const n = Number(num);
   if (!Number.isFinite(n) || n <= 0) return null;
@@ -86,7 +105,6 @@ async function fetchTikTokClientSide(cleanUrl) {
     const links = [];
 
     if (slides.length > 0) {
-      // Mode Photo Slideshow / Live Photo TikTok
       if (d.play?.startsWith("https://")) {
         links.push({
           label: "Download as video (MP4 Slideshow)",
@@ -104,7 +122,6 @@ async function fetchTikTokClientSide(cleanUrl) {
         });
       }
     } else {
-      // Mode Video Reguler TikTok
       if (d.hdplay?.startsWith("https://")) {
         links.push({
           label: "Download MP4 HD (No Watermark)",
@@ -168,11 +185,40 @@ export function initDownloaderModule() {
 
   if (!urlInput || !btnRun) return;
 
+  // Sinkronisasi otomatis tombol Paste <-> Hapus
+  function syncPasteOrClearButton() {
+    if (!btnPaste) return;
+    const hasValue = urlInput.value.trim().length > 0;
+    if (hasValue) {
+      btnPaste.textContent = "Hapus";
+      btnPaste.style.background = "rgba(239, 68, 68, 0.16)";
+      btnPaste.style.color = "#f87171";
+      btnPaste.style.borderColor = "rgba(239, 68, 68, 0.35)";
+    } else {
+      btnPaste.textContent = "Paste";
+      btnPaste.style.background = "";
+      btnPaste.style.color = "";
+      btnPaste.style.borderColor = "";
+    }
+  }
+
+  urlInput.addEventListener("input", syncPasteOrClearButton);
+  syncPasteOrClearButton();
+
   btnPaste?.addEventListener("click", async () => {
+    if (urlInput.value.trim().length > 0) {
+      urlInput.value = "";
+      resultBox?.classList.add("hidden");
+      syncPasteOrClearButton();
+      urlInput.focus();
+      return;
+    }
+
     try {
       const clip = await navigator.clipboard.readText();
       const extracted = extractFirstHttpsUrl(clip);
       urlInput.value = extracted || clip.trim();
+      syncPasteOrClearButton();
     } catch {
       urlInput.focus();
       alert("Izinkan akses clipboard atau tempel tautan secara manual.");
@@ -219,7 +265,6 @@ export function initDownloaderModule() {
     card.style.cssText =
       "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;overflow:hidden;";
 
-    // 1. Area Preview Gambar Statis (Khusus mode video tunggal)
     if (!hasSlides && data.cover) {
       const mediaWrap = document.createElement("div");
       mediaWrap.style.cssText =
@@ -245,7 +290,6 @@ export function initDownloaderModule() {
       card.appendChild(mediaWrap);
     }
 
-    // 2. Area Info Kreator, Statistik & Caption
     const bodyWrap = document.createElement("div");
     bodyWrap.style.cssText = "padding:14px;";
 
@@ -303,7 +347,6 @@ export function initDownloaderModule() {
       bodyWrap.appendChild(titleEl);
     }
 
-    // 3. Tombol Aksi Utama (Termasuk Download All as ZIP untuk Photo Slideshow)
     const listWrap = document.createElement("div");
     listWrap.style.cssText = "display:flex;flex-direction:column;gap:10px;";
 
@@ -390,7 +433,6 @@ export function initDownloaderModule() {
 
     bodyWrap.appendChild(listWrap);
 
-    // 4. Grid Kartu Slide Individu (1 - 16+ Foto & Live Photo)
     if (hasSlides) {
       const slidesContainer = document.createElement("div");
       slidesContainer.style.cssText =
@@ -405,14 +447,12 @@ export function initDownloaderModule() {
         thumbBox.style.cssText =
           "position:relative;width:100%;aspect-ratio:3/4;background:#09090b;overflow:hidden;user-select:none;";
 
-        // Badge nomor slide (pojok kanan atas)
         const numBadge = document.createElement("span");
         numBadge.textContent = String(slide.index);
         numBadge.style.cssText =
           "position:absolute;top:8px;right:8px;background:rgba(0,0,0,0.75);color:#fff;font-size:0.75rem;font-weight:800;padding:3px 9px;border-radius:8px;z-index:2;pointer-events:none;";
         thumbBox.appendChild(numBadge);
 
-        // Badge LIVE jika merupakan TikTok Live Photo (pojok kiri atas)
         if (slide.isLive) {
           const liveBadge = document.createElement("span");
           liveBadge.textContent = "LIVE";
@@ -421,7 +461,6 @@ export function initDownloaderModule() {
           thumbBox.appendChild(liveBadge);
         }
 
-        // Badge resolusi (pojok kiri bawah, otomatis terisi saat gambar dimuat)
         const resBadge = document.createElement("span");
         resBadge.style.cssText =
           "position:absolute;bottom:8px;left:8px;background:rgba(0,0,0,0.72);color:#fff;font-size:0.72rem;font-weight:600;padding:2px 7px;border-radius:6px;z-index:2;pointer-events:none;display:none;";
@@ -494,6 +533,7 @@ export function initDownloaderModule() {
       return alert("Tempel tautan video/foto yang valid (https://...) terlebih dahulu.");
     }
     urlInput.value = cleanUrl;
+    syncPasteOrClearButton();
 
     const oldLabel = btnRun.textContent;
     btnRun.disabled = true;
@@ -536,7 +576,7 @@ export function initDownloaderModule() {
       renderDownloadResult(data);
       saveLocalHistory("downloader", data.title || cleanUrl, cleanUrl);
     } catch (err) {
-      alert(err.message || "Gagal memproses tautan. Pastikan postingan bersifat publik.");
+      alert(sanitizeDownloaderError(err.message, cleanUrl));
     } finally {
       btnRun.disabled = false;
       btnRun.textContent = oldLabel;
