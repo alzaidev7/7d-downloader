@@ -1,4 +1,4 @@
-import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=6";
+import { guardActionAgainstAdblock, saveLocalHistory } from "../app.js?v=7";
 
 let pendingHdUrl = null;
 let hdCountdownTimer = null;
@@ -398,19 +398,47 @@ export function initDownloaderModule() {
     card.style.cssText =
       "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:16px;overflow:hidden;";
 
-    if (!hasSlides && data.cover) {
+    const firstVideoUrl = !hasSlides
+      ? (data.links || []).find((l) => l.type === "mp4" && l.url)?.url || ""
+      : "";
+
+    if (!hasSlides && (data.cover || firstVideoUrl)) {
       const mediaWrap = document.createElement("div");
       mediaWrap.style.cssText =
         "position:relative;width:100%;aspect-ratio:16/10;background:#0a0a0c;overflow:hidden;user-select:none;";
 
-      const imgEl = document.createElement("img");
-      imgEl.src = data.cover;
-      imgEl.alt = "Thumbnail Preview";
-      imgEl.draggable = false;
-      imgEl.addEventListener("contextmenu", (e) => e.preventDefault());
-      imgEl.style.cssText =
-        "width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;";
-      mediaWrap.appendChild(imgEl);
+      const mountVideoFrameFallback = () => {
+        if (!firstVideoUrl) {
+          mediaWrap.remove();
+          return;
+        }
+        mediaWrap.querySelector("img")?.remove();
+        const vidEl = document.createElement("video");
+        vidEl.src = firstVideoUrl + "#t=0.5";
+        vidEl.muted = true;
+        vidEl.playsInline = true;
+        vidEl.preload = "metadata";
+        vidEl.disablePictureInPicture = true;
+        vidEl.style.cssText =
+          "width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;";
+        vidEl.addEventListener("error", () => mediaWrap.remove());
+        mediaWrap.prepend(vidEl);
+      };
+
+      if (data.cover) {
+        const imgEl = document.createElement("img");
+        imgEl.referrerPolicy = "no-referrer";
+        imgEl.src = data.cover;
+        imgEl.alt = "Thumbnail Preview";
+        imgEl.draggable = false;
+        imgEl.addEventListener("contextmenu", (e) => e.preventDefault());
+        imgEl.addEventListener("error", mountVideoFrameFallback);
+        imgEl.style.cssText =
+          "width:100%;height:100%;object-fit:cover;display:block;pointer-events:none;";
+        mediaWrap.appendChild(imgEl);
+      } else {
+        mountVideoFrameFallback();
+      }
 
       if (data.duration) {
         const badge = document.createElement("span");

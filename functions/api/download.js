@@ -123,7 +123,7 @@ async function fetchInstagramViaInstaFix(shortcode, kind) {
         html.match(/<meta[^>]+name=["']twitter:player:stream["'][^>]+content=["']([^"']+)["']/i);
       const videoUrl = ogVidMatch ? resolveProxyUrl(ogVidMatch[1], base) : "";
 
-      const ogImgMatches = [...html.matchAll(/<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/gi)];
+      const ogImgMatches = [...html.matchAll(/<meta[^>]+(?:property|name)=["'](?:og:image|twitter:image)["'][^>]+content=["']([^"']+)["']/gi)];
       const imageUrls = ogImgMatches
         .map((m) => resolveProxyUrl(m[1], base))
         .filter((u) => u && !/favicon|logo|banner/i.test(u));
