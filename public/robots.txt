@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://7d-downloader.pages.dev/sitemap.xml
