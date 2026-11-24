@@ -1,3 +1,3 @@
-export function initAdblockDetector() {}
-export function isAdblockDetected() { return false; }
+export function initAdSystem() {}
 export function guardActionAgainstAdblock() { return true; }
+export function refreshAdSlotsOnTabSwitch() {}
