@@ -58,7 +58,7 @@ export function initBratModule() {
     const maxH = size - padY * 2;
     const hScale = 0.82; // Proporsi huruf ramping tinggi khas Brat
 
-    const raw = (textInput.value || "biar semesta aja yg atur, aku mau lanjut main roblox 🙏")
+    const raw = (textInput.value || "ketik teks stiker...")
       .trim()
       .toLowerCase();
     const words = raw.split(/\s+/).filter(Boolean);

@@ -4,22 +4,23 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>7D - Downloader</title>
-  <meta name="description" content="Unduh video MP4 HD & MP3 tanpa watermark dari TikTok, Instagram, Facebook. Lengkap dengan AI Remove BG, Smart QR Studio, dan Brat Sticker Generator gratis." />
+  <meta name="description" content="Unduh video MP4 & audio MP3 tanpa watermark dari TikTok, Instagram, dan Facebook, dilengkapi penghapus latar foto, generator kode QR, dan pembuat stiker." />
   <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="apple-touch-icon" href="/logo.png" />
-  <link rel="stylesheet" href="css/style.css?v=20" />
+  <link rel="stylesheet" href="css/style.css?v=21" />
   <script defer src="https://cdn.jsdelivr.net/npm/qr-code-styling@1.6.0-rc.1/lib/qr-code-styling.js"></script>
 </head>
 <body>
   <header class="topbar">
     <div class="container topbar-inner">
       <div class="brand">
-        <img src="/logo.png" alt="Logo 7D" width="32" height="32" class="brand-logo" />
+        <img src="/logo.png" alt="Logo 7D" width="30" height="30" class="brand-logo" />
         <span class="brand-name">7D - Downloader</span>
       </div>
       <div class="topbar-actions">
-        
-        <button type="button" id="btnThemeToggle" class="btn-icon" title="Ganti Tema">☀️</button>
+        <button type="button" id="btnThemeToggle" class="btn-icon" title="Ganti Tema" aria-label="Ganti Tema">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+        </button>
       </div>
     </div>
   </header>
@@ -33,17 +34,16 @@
       <button type="button" class="tab-pill" data-tab="brat" role="tab" aria-selected="false">Brat Maker</button>
     </nav>
 
-    <!-- TITIK IKLAN 1: Banner Atas (Zero-Placeholder) -->
     <div id="adSlot1" class="ad-container empty" data-ad-zone="top-banner"></div>
 
     <!-- WORKSPACE 1: MEDIA DOWNLOADER -->
-<section id="tab-downloader" class="workspace-card">
+    <section id="tab-downloader" class="workspace-card">
       <div class="card-header">
         <h1>Media Downloader</h1>
-        <p>Unduh video MP4 & audio MP3 tanpa watermark dari TikTok, Instagram, dan Facebook.</p>
+        <p>Simpan video MP4 dan audio MP3 tanpa watermark dari TikTok, Instagram, atau Facebook.</p>
       </div>
       <div class="input-with-paste">
-        <input type="url" id="dlUrlInput" placeholder="Tempel tautan video di sini (https://...)" autocomplete="off" />
+        <input type="url" id="dlUrlInput" placeholder="https://www.tiktok.com/... atau instagram.com/..." autocomplete="off" />
         <button type="button" id="btnPasteUrl" class="btn-paste">Paste</button>
       </div>
       <button type="button" id="btnDownloadRun" class="btn-emerald full">Download</button>
@@ -52,19 +52,19 @@
         <span class="badge">TikTok</span>
         <span class="badge">Instagram</span>
         <span class="badge">Facebook</span>
-        <span class="badge accent">MP4 HD / MP3</span>
+        <span class="badge accent">MP4 / MP3</span>
       </div>
 
       <div id="dlResultBox" class="result-area hidden"></div>
     </section>
 
-    <!-- WORKSPACE 2: AI REMOVE BG STUDIO -->
+    <!-- WORKSPACE 2: REMOVE BG -->
     <section id="tab-removebg" class="workspace-card hidden">
       <div class="card-header">
         <div class="header-row">
           <div>
-            <h1>AI Background Studio</h1>
-            <p>Hapus latar otomatis, rapikan kuas, blur latar, tambah bayangan & teks.</p>
+            <h1>Remove BG</h1>
+            <p>Hapus latar belakang foto otomatis di browser, atur warna latar, blur, dan bayangan.</p>
           </div>
           <div class="editor-top-tools hidden" id="bgTopTools">
             <button type="button" id="btnBgCompare" class="btn-ghost-sm">Bandingkan</button>
@@ -77,8 +77,9 @@
 
       <label for="bgFileInput" id="bgUploadDrop" class="upload-dropzone">
         <input type="file" id="bgFileInput" accept="image/jpeg,image/png,image/webp" hidden />
-        <span class="drop-title">Pilih atau Tarik Foto ke Sini</span>
-        <span class="drop-sub">Mendukung JPG, PNG, WebP (Maksimal 4 MB)</span>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" style="opacity:0.7; margin-bottom:6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+        <span class="drop-title">Pilih atau tarik foto ke sini</span>
+        <span class="drop-sub">JPG, PNG, atau WebP (maks. 4 MB)</span>
       </label>
 
       <div id="bgEditorWrap" class="bg-editor-wrap hidden">
@@ -88,8 +89,8 @@
 
         <div class="editor-dock">
           <div class="dock-tabs">
-            <button type="button" class="dock-btn active" data-panel="panel-bg">Latar Belakang</button>
-            <button type="button" class="dock-btn" data-panel="panel-cutout">Potongan (Kuas)</button>
+            <button type="button" class="dock-btn active" data-panel="panel-bg">Latar</button>
+            <button type="button" class="dock-btn" data-panel="panel-cutout">Kuas</button>
             <button type="button" class="dock-btn" data-panel="panel-effects">Efek</button>
             <button type="button" class="dock-btn" data-panel="panel-text">Teks</button>
           </div>
@@ -104,7 +105,7 @@
               <button type="button" class="swatch" style="background:#10b981" data-bg="#10b981"></button>
               <input type="color" id="bgColorPicker" value="#18181b" title="Warna Kustom" />
               <label class="btn-ghost-sm">
-                + Foto Latar
+                Foto Latar
                 <input type="file" id="bgCustomPhoto" accept="image/jpeg,image/png,image/webp" hidden />
               </label>
             </div>
@@ -122,10 +123,10 @@
 
           <div id="panel-effects" class="dock-panel hidden">
             <div class="effect-controls">
-              <label class="slider-label">Buram Latar:
+              <label class="slider-label">Blur Latar:
                 <input type="range" id="bgBlurRange" min="0" max="20" value="0" />
               </label>
-              <label class="slider-label">Bayangan Objek:
+              <label class="slider-label">Bayangan:
                 <input type="range" id="bgShadowRange" min="0" max="35" value="0" />
               </label>
             </div>
@@ -133,7 +134,7 @@
 
           <div id="panel-text" class="dock-panel hidden">
             <div class="input-group compact">
-              <input type="text" id="bgTextInput" placeholder="Ketik teks stiker..." maxlength="40" />
+              <input type="text" id="bgTextInput" placeholder="Teks pada gambar..." maxlength="40" />
               <input type="color" id="bgTextColor" value="#ffffff" />
               <button type="button" id="btnBgAddText" class="btn-emerald-sm">Terapkan</button>
             </div>
@@ -142,11 +143,11 @@
       </div>
     </section>
 
-    <!-- WORKSPACE 3: SMART QR STUDIO -->
+    <!-- WORKSPACE 3: QR STUDIO -->
     <section id="tab-qrstudio" class="workspace-card hidden">
       <div class="card-header">
-        <h1>Smart QR Studio</h1>
-        <p>Ubah Teks, Link URL, atau Foto menjadi kode QR siap unduh (aktif 24 jam untuk foto).</p>
+        <h1>QR Studio</h1>
+        <p>Buat kode QR dari teks, tautan URL, atau unggahan foto sementara.</p>
       </div>
       <div class="sub-pills">
         <button type="button" class="sub-pill active" data-qrmode="text">Text / URL</button>
@@ -155,7 +156,7 @@
 
       <div id="qrTextMode">
         <div class="input-group">
-          <input type="text" id="qrTextInput" placeholder="Masukkan URL atau teks di sini..." maxlength="500" />
+          <input type="text" id="qrTextInput" placeholder="Masukkan URL atau teks..." maxlength="500" />
           <button type="button" id="btnQrGenerate" class="btn-emerald">Buat QR</button>
         </div>
       </div>
@@ -163,8 +164,8 @@
       <div id="qrPhotoMode" class="hidden">
         <label for="qrPhotoInput" class="upload-dropzone compact">
           <input type="file" id="qrPhotoInput" accept="image/jpeg,image/png,image/webp" hidden />
-          <span class="drop-title">Pilih Foto untuk Dijadikan QR (Maks. 5 MB)</span>
-          <span class="drop-sub">Tautan foto otomatis terhapus setelah 24 jam</span>
+          <span class="drop-title">Pilih foto untuk dijadikan QR (maks. 5 MB)</span>
+          <span class="drop-sub">Tautan foto kedaluwarsa otomatis dalam 24 jam</span>
         </label>
       </div>
 
@@ -180,16 +181,16 @@
     <!-- WORKSPACE 4: BRAT MAKER -->
     <section id="tab-brat" class="workspace-card hidden">
       <div class="card-header">
-        <h1>Brat Sticker Generator</h1>
-        <p>Teks rata penuh (full-justify) & efek blur khas stiker WhatsApp.</p>
+        <h1>Brat Maker</h1>
+        <p>Generator teks rata penuh dengan efek blur untuk stiker WhatsApp.</p>
       </div>
       <div class="brat-layout">
         <div class="brat-controls">
-          <textarea id="bratTextInput" rows="4" maxlength="140" placeholder="ketik teks kamu di sini...">Enter your text here...</textarea>
+          <textarea id="bratTextInput" rows="4" maxlength="140" placeholder="Ketik teks stiker...">ketik teks stiker...</textarea>
           <div class="brat-themes">
-            <button type="button" class="brat-theme-btn active" data-btheme="white">Putih WA</button>
-            <button type="button" class="brat-theme-btn" data-btheme="green">Hijau Brat</button>
-            <button type="button" class="brat-theme-btn" data-btheme="black">Hitam Gelap</button>
+            <button type="button" class="brat-theme-btn active" data-btheme="white">Putih</button>
+            <button type="button" class="brat-theme-btn" data-btheme="green">Hijau</button>
+            <button type="button" class="brat-theme-btn" data-btheme="black">Hitam</button>
           </div>
           <div class="qr-actions">
             <button type="button" id="btnBratPng" class="btn-emerald">Unduh PNG</button>
@@ -202,138 +203,43 @@
       </div>
     </section>
 
-    <!-- TITIK IKLAN 2: Banner Tengah (Zero-Placeholder) -->
     <div id="adSlot2" class="ad-container empty" data-ad-zone="mid-banner"></div>
 
-    <!-- =========================================================
-         BAGIAN INFORMASI & PANDUAN ALA SNAPTIK (ANTI-KOPONG)
-    ========================================================= -->
-    
-    <!-- 1. Tiga Keunggulan Utama -->
-    <section class="seo-highlights">
-      <div class="highlight-item">
-        <h3>Gratis & Tanpa Batas</h3>
-        <p>Gunakan seluruh alat pengunduh video, penghapus latar, dan pembuat stiker tanpa batasan jumlah harian.</p>
-      </div>
-      <div class="highlight-item">
-        <h3>Tanpa Watermark</h3>
-        <p>Simpan video bersih tanpa logo pengganggu dalam resolusi standar maupun kualitas tinggi (HD).</p>
-      </div>
-      <div class="highlight-item">
-        <h3>MP4 & MP3 Instan</h3>
-        <p>Bebas memilih unduhan format video MP4 lengkap atau ekstrak langsung menjadi audio musik MP3.</p>
-      </div>
-    </section>
-
-    <!-- 2. Kartu Panduan Langkah Demi Langkah -->
-    <section class="guide-banner">
-      <h2>Cara Menggunakan 7D - Downloader</h2>
-      <div class="guide-steps">
-        <div class="step-box">
-          <span class="step-num">1</span>
-          <div>
-            <strong>Salin Tautan atau Pilih Foto</strong>
-            <p>Salin link video dari TikTok, Instagram, atau Facebook—atau pilih tab alat kreatif lainnya di menu atas.</p>
-          </div>
-        </div>
-        <div class="step-box">
-          <span class="step-num">2</span>
-          <div>
-            <strong>Tempel & Proses Otomatis</strong>
-            <p>Ketuk tombol <b>Paste</b> pada kolom input lalu tekan <b>Download</b>. Sistem akan menyiapkan pilihan format dalam hitungan detik.</p>
-          </div>
-        </div>
-        <div class="step-box">
-          <span class="step-num">3</span>
-          <div>
-            <strong>Simpan ke Perangkat</strong>
-            <p>Pilih <b>Download MP4</b>, <b>MP3</b>, atau buka kualitas <b>MP4 HD</b> untuk menyimpannya langsung ke galeri HP maupun PC.</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- TITIK IKLAN 3 & 4: Dual Bento Bottom (Zero-Placeholder) -->
     <section id="adFooterGrid" class="bento-footer-grid empty">
       <div id="adSlot3" class="ad-container empty" data-ad-zone="bottom-left"></div>
       <div id="adSlot4" class="ad-container empty" data-ad-zone="bottom-right"></div>
     </section>
 
-    <!-- 3. Grid 6 Fitur Unggulan -->
-    <section class="features-grid">
-      <div class="feature-card">
-        <div class="feat-icon">⚡</div>
-        <h4>Cepat & Ringan di HP</h4>
-        <p>Dirancang tanpa skrip berat agar lancar dibuka dari browser ponsel maupun komputer.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feat-icon">🎬</div>
-        <h4>Multi-Platform Video</h4>
-        <p>Mendukung berbagai tautan publik dari TikTok Shorts, Reels Instagram, hingga Facebook.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feat-icon">✂️</div>
-        <h4>AI Remove BG Studio</h4>
-        <p>Hapus latar foto otomatis dan ganti warna background, efek blur, bayangan, serta teks.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feat-icon">📷</div>
-        <h4>Photo-to-QR 24 Jam</h4>
-        <p>Ubah foto menjadi kode QR praktis yang otomatis terhapus demi privasi setelah 24 jam.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feat-icon">🟩</div>
-        <h4>Brat Sticker WA</h4>
-        <p>Buat stiker teks rata penuh dengan efek buram autentik siap pakai di WhatsApp.</p>
-      </div>
-      <div class="feature-card">
-        <div class="feat-icon">🔒</div>
-        <h4>Tanpa Login & Aman</h4>
-        <p>Tidak perlu mendaftar akun atau memasukkan kata sandi media sosial apa pun.</p>
-      </div>
-    </section>
-
-    <!-- 4. Pertanyaan Umum (FAQ Accordion) -->
-    <section class="faq-section">
-      <h2>Pertanyaan yang Sering Diajukan (FAQ)</h2>
+    <!-- INFORMASI SINGKAT (RINGKAS & PADAT) -->
+    <section class="faq-section" style="margin-top: 24px;">
+      <h2 style="text-align: left; font-size: 1rem; margin-bottom: 12px;">Informasi &amp; Pertanyaan Umum</h2>
       <div class="faq-list">
         <details class="faq-item">
-          <summary>Apakah semua alat di 7D - Downloader gratis digunakan?</summary>
-          <p>Ya, seluruh fitur mulai dari Media Downloader, AI Remove BG, Smart QR Studio, hingga Brat Sticker Generator dapat digunakan 100% gratis tanpa perlu membuat akun.</p>
+          <summary>Platform apa saja yang didukung Media Downloader?</summary>
+          <p>Mendukung tautan publik dari TikTok (video MP4 tanpa watermark, slideshow foto, dan audio MP3), Instagram (Reels, Post, Carousel), serta video publik Facebook.</p>
         </details>
         <details class="faq-item">
-          <summary>Bagaimana cara mengunduh video kualitas MP4 HD?</summary>
-          <p>Setelah menempel tautan dan menekan Download, pilih tombol <b>Download MP4 HD</b>, lalu ikuti tayangan iklan singkat selama 15 detik untuk membuka tautan resolusi tertinggi.</p>
+          <summary>Apakah foto di Remove BG dikirim ke server?</summary>
+          <p>Tidak. Pemrosesan penghapusan latar berjalan langsung di browser perangkatmu sehingga privasi foto terjaga dan tidak disimpan di server.</p>
         </details>
         <details class="faq-item">
-          <summary>Mengapa foto di AI Remove BG dibatasi maksimal 4 MB?</summary>
-          <p>Pemrosesan AI penghapus latar berjalan langsung di browser perangkatmu. Batas 4 MB menjaga agar proses pemotongan tetap cepat dan tidak membebani memori RAM HP.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Berapa lama tautan Photo-to-QR dapat diakses?</summary>
-          <p>Demi menjaga keamanan dan privasi pengguna, setiap foto yang diubah menjadi kode QR disimpan sementara selama 24 jam dan akan dihapus otomatis setelahnya.</p>
-        </details>
-        <details class="faq-item">
-          <summary>Di mana hasil unduhan video dan gambar disimpan?</summary>
-          <p>Semua file otomatis tersimpan di folder <b>Downloads / Unduhan</b> bawaan browser atau galeri perangkatmu.</p>
+          <summary>Berapa lama masa aktif tautan Photo-to-QR?</summary>
+          <p>Foto yang diunggah pada fitur Photo-to-QR disimpan sementara selama 24 jam dan dihapus otomatis setelah masa berlaku habis.</p>
         </details>
       </div>
     </section>
   </main>
-  <!-- Footer Profesional -->
-  <footer class="site-footer" style="margin: 36px auto 0; max-width: 680px; padding: 28px 16px 32px; text-align: center; border-top: 1px solid rgba(128, 128, 128, 0.18);">
-    <div style="font-weight: 800; font-size: 1rem; letter-spacing: 0.4px; margin-bottom: 8px;">
-      7D - Downloader
-    </div>
-    <p style="margin: 0 auto 18px; max-width: 420px; font-size: 0.8rem; opacity: 0.7; line-height: 1.55;">
-      7D - Downloader tidak berafiliasi dengan TikTok, ByteDance, Meta, maupun platform pihak ketiga mana pun. Gunakan hanya untuk mengunduh konten yang memiliki izin penggunaan pribadi.
+
+  <footer class="site-footer" style="margin: 32px auto 0; max-width: 680px; padding: 24px 16px 32px; text-align: center; border-top: 1px solid rgba(128, 128, 128, 0.16);">
+    <div style="font-weight: 700; font-size: 0.95rem; margin-bottom: 6px;">7D - Downloader</div>
+    <p style="margin: 0 auto 16px; max-width: 440px; font-size: 0.78rem; opacity: 0.65; line-height: 1.55;">
+      Alat utilitas independen dan tidak berafiliasi dengan TikTok, ByteDance, maupun Meta. Gunakan hanya untuk mengunduh konten dengan izin penggunaan pribadi.
     </p>
 
-    <!-- Ikon Bulat SVG (Direct ke IG & Email) -->
-    <div style="display: flex; justify-content: center; align-items: center; gap: 14px; margin-bottom: 20px;">
+    <div style="display: flex; justify-content: center; align-items: center; gap: 12px; margin-bottom: 14px;">
       <a href="https://instagram.com/alzai7_tech" target="_blank" rel="noopener noreferrer" aria-label="Instagram Alzai7"
-         style="width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(128, 128, 128, 0.28); background: rgba(128, 128, 128, 0.08); color: inherit; display: inline-flex; align-items: center; justify-content: center; text-decoration: none;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+         style="width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(128, 128, 128, 0.25); background: rgba(128, 128, 128, 0.06); color: inherit; display: inline-flex; align-items: center; justify-content: center; text-decoration: none;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="2" width="20" height="20" rx="5" ry="5"></rect>
           <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"></path>
           <line x1="17.5" y1="6.5" x2="17.51" y2="6.5"></line>
@@ -341,25 +247,16 @@
       </a>
 
       <a href="mailto:alzaidev7@gmail.com" aria-label="Email Kontak"
-         style="width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(128, 128, 128, 0.28); background: rgba(128, 128, 128, 0.08); color: inherit; display: inline-flex; align-items: center; justify-content: center; text-decoration: none;">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+         style="width: 38px; height: 38px; border-radius: 50%; border: 1px solid rgba(128, 128, 128, 0.25); background: rgba(128, 128, 128, 0.06); color: inherit; display: inline-flex; align-items: center; justify-content: center; text-decoration: none;">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2" y="4" width="20" height="16" rx="2"></rect>
           <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"></path>
         </svg>
       </a>
     </div>
 
-    <!-- Keterangan Kontak Tertulis -->
-    <div style="font-size: 0.74rem; letter-spacing: 1.5px; text-transform: uppercase; opacity: 0.55; margin-bottom: 6px; font-weight: 700;">
-      Contact Us
-    </div>
-    <div style="font-size: 0.84rem; opacity: 0.85; line-height: 1.7;">
-      <div>Instagram: <a href="https://instagram.com/alzai7_tech" target="_blank" rel="noopener noreferrer" style="color: #10b981; text-decoration: none;">@alzai7_tech</a></div>
-      <div>Email: <a href="mailto:alzaidev7@gmail.com" style="color: inherit; text-decoration: none;">alzaidev7@gmail.com</a></div>
-    </div>
-
-    <div style="margin-top: 18px; font-size: 0.78rem; opacity: 0.55;">
-      &copy; 2026 7D - Downloader &bull; Built by Alzai7
+    <div style="font-size: 0.78rem; opacity: 0.65;">
+      &copy; 2026 7D - Downloader &bull; Alzai7
     </div>
   </footer>
 
@@ -367,8 +264,8 @@
   <div id="hdGateModal" class="modal-backdrop hidden">
     <div class="modal-box center">
       <h3>Buka Kualitas HD</h3>
-      <p id="hdGateDesc">Lihat iklan singkat selama 15 detik untuk membuka tautan unduhan <strong>MP4 HD Tanpa Watermark</strong>.</p>
-      <button type="button" id="btnTriggerHdAd" class="btn-emerald full">Tonton Iklan & Buka HD</button>
+      <p id="hdGateDesc">Unduh tautan resolusi tertinggi <strong>MP4 HD Tanpa Watermark</strong>.</p>
+      <button type="button" id="btnTriggerHdAd" class="btn-emerald full">Unduh MP4 HD</button>
       <button type="button" id="btnCloseHdGate" class="btn-ghost-sm" style="margin-top:10px; width:100%;">Batal</button>
     </div>
   </div>
@@ -378,7 +275,9 @@
     <div class="modal-box">
       <div class="modal-head">
         <h3>Riwayat Lokal</h3>
-        <button type="button" id="btnHistoryClose" class="btn-icon">✕</button>
+        <button type="button" id="btnHistoryClose" class="btn-icon" aria-label="Tutup">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <ul id="historyList" class="history-list"></ul>
     </div>
@@ -388,12 +287,12 @@
   <div id="adblockModal" class="modal-backdrop hidden">
     <div class="modal-box center">
       <h3>AdBlock Terdeteksi</h3>
-      <p><strong>7D - Downloader</strong> menyediakan seluruh alat secara gratis berkat dukungan iklan ringan. Mohon nonaktifkan AdBlock atau DNS pemblokir iklan pada situs ini, lalu muat ulang halaman.</p>
-      <button type="button" id="btnReloadPage" class="btn-emerald full">Saya Sudah Matikan, Muat Ulang</button>
+      <p>Mohon nonaktifkan AdBlock atau DNS pemblokir pada situs ini, lalu muat ulang halaman.</p>
+      <button type="button" id="btnReloadPage" class="btn-emerald full">Muat Ulang Halaman</button>
     </div>
   </div>
 
   <script src="ads.js?v=4"></script>
-  <script type="module" src="js/app.js?v=8"></script>
+  <script type="module" src="js/app.js?v=9"></script>
 </body>
 </html>

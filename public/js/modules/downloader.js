@@ -489,8 +489,8 @@ export function initDownloaderModule() {
         statsEl.style.cssText =
           "display:flex;gap:12px;font-size:0.78rem;opacity:0.75;margin-top:3px;";
         const parts = [];
-        if (data.stats.likes) parts.push(`♥ ${data.stats.likes}`);
-        if (data.stats.comments) parts.push(`💬 ${data.stats.comments}`);
+        if (data.stats.likes) parts.push(`${data.stats.likes} suka`);
+        if (data.stats.comments) parts.push(`${data.stats.comments} komentar`);
         if (data.stats.shares) parts.push(`↗ ${data.stats.shares}`);
         statsEl.textContent = parts.join("   ");
         metaCol.appendChild(statsEl);
